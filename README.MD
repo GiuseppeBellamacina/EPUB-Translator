@@ -15,8 +15,8 @@ This project provides a set of tools for translating the text content of EPUB fi
 # Installation
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/yourrepository.git
-   cd yourrepository
+   git clone https://github.com/GiuseppeBellamacina/EPUB-Translator.git
+   cd EPUB-Translator
    ```
 2. Install the required Python packages:
    ```bash
