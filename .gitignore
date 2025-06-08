@@ -1,0 +1,5 @@
+translated/
+__pycache__/
+*.epub
+*.pdf
+*.env
