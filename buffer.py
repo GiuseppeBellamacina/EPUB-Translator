@@ -3,62 +3,67 @@ from bs4.element import NavigableString, Tag
 
 
 class TextBuffer:
-    def __init__(self, translate_func, debug=False, batch_size=None):
-        print("\33[34mInitializing TextBuffer with batch size: \33[0m", batch_size)
-        self.items = []  # List of (original_tag, text)
+    def __init__(self, translate_func, debug=False, batch_size=1):
         self.translate_func = translate_func
         self.debug = debug
-        self.blocking_tags = {"a", "h1", "h2", "title"}
-        self.invalid_tags = {"script", "style", "meta"}
         self.batch_size = batch_size
 
+        self.blocking_tags = {"a", "h1", "h2", "title"}
+        self.invalid_tags = {"script", "style", "meta"}
+
+        self.current_phrase = []
+        self.phrases = []
+
     def add(self, tag, text):
-        tag_name = tag.parent.name if tag.parent else None
-        prev_tag_name = self._get_parent_name(self.items[-1][0]) if self.items else None
+        tag_name = self._get_parent_name(tag)
 
-        force_flush = self.items and (
-            prev_tag_name == tag_name
-            and not self._ends_with_delimiter(self.items[-1][1])
-            or prev_tag_name in self.blocking_tags
-        )
+        if self.current_phrase:
+            last_tag, last_text = self.current_phrase[-1]
+            last_tag_name = self._get_parent_name(last_tag)
 
-        if force_flush:
-            self.flush()
-        self.items.append((tag, text))
+            ends_with_delim = self._ends_with_delimiter(last_text)
+            same_tag = tag_name == last_tag_name
+            blocking = tag_name in self.blocking_tags or last_tag_name in self.blocking_tags
+            repeated_tag = same_tag and tag_name not in self.invalid_tags
 
-        if self._ends_with_delimiter(text):
-            self.flush()
+            if ends_with_delim or blocking or repeated_tag:
+                self._commit_phrase()
 
-    def flush(self):
-        if not self.items:
+        self.current_phrase.append((tag, text))
+
+        if len(self.phrases) >= self.batch_size:
+            self._flush_phrases()
+
+    def flush(self, force=False):
+        if force and self.current_phrase:
+            self._commit_phrase()
+        if force and self.phrases:
+            self._flush_phrases()
+
+    def _commit_phrase(self):
+        if self.current_phrase:
+            self.phrases.append(self.current_phrase)
+            self.current_phrase = []
+
+    def _flush_phrases(self):
+        if not self.phrases:
             return
 
-        chunks = []
-        chunk = []
-        for tag, text in self.items:
-            chunk.append((tag, text))
-            if self.batch_size and len(chunk) >= self.batch_size:
-                chunks.append(chunk)
-                chunk = []
-        if chunk:
-            chunks.append(chunk)
+        original_texts = [" ".join(text for _, text in phrase).strip() for phrase in self.phrases]
+        translations = self.translate_func(original_texts)
+        assert len(translations) == len(self.phrases), "Mismatch in batch size"
 
-        all_texts = [" ".join(text for _, text in chunk).strip() for chunk in chunks]
-        all_translations = self.translate_func(all_texts)
+        for phrase, translated in zip(self.phrases, translations):
+            first_tag, _ = phrase[0]
 
-        assert len(all_translations) == len(chunks), "Mismatch between input and output batch lengths"
-
-        for (chunk, translated) in zip(chunks, all_translations):
             if self.debug:
                 print("—" * 20)
-                print(f"Original: {' '.join(text for _, text in chunk)}")
+                print(f"Original: {' '.join(t for _, t in phrase)}")
                 print(f"Translated: {translated}")
-                print(f"Tags: {[self._get_parent_name(tag) for tag, _ in chunk]}")
-
-            first_tag, _ = chunk[0]
+                print(f"Tags: {[self._get_parent_name(t) for t, _ in phrase]}")
 
             if isinstance(first_tag, Tag):
-                for tag, _ in chunk[1:]:
+                for tag, _ in phrase[1:]:
                     tag.extract()
                 first_tag.clear()
                 first_tag.append(NavigableString(translated))
@@ -73,13 +78,13 @@ class TextBuffer:
                 new_tag.clear()
                 new_tag.append(NavigableString(translated))
                 first_tag.insert_before(new_tag)
-                for tag, _ in chunk:
+                for tag, _ in phrase:
                     tag.extract()
 
-        self.items.clear()
+        self.phrases.clear()
 
     def _ends_with_delimiter(self, text):
-        return bool(re.search(r"[.!?;:\n]\s*$", text.strip()))
+        return bool(re.search(r"[.!?;:]\s*$", text.strip()))
 
     def _get_parent_name(self, tag):
         return tag.parent.name if tag and tag.parent else None
