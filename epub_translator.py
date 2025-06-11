@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, List
 from ebooklib import epub
 from translator import Translator
 from utilities import (
@@ -16,8 +16,8 @@ def dummy_translate_text(text):
 
 
 def translate_with_translator(
-    text: str, translator: Translator
-) -> Optional[str]:
+    text: List[str], translator: Translator
+) -> List[str]:
     if not translator:
         raise ValueError("Translator instance is required for translation.")
     if not isinstance(translator, Translator):

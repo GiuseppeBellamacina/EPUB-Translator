@@ -6,7 +6,6 @@ from tqdm.notebook import tqdm
 from buffer import TextBuffer
 
 
-
 def is_file_in_book(book: epub.EpubBook, filename: str) -> bool:
     return any(item.file_name == filename for item in book.get_items())
 

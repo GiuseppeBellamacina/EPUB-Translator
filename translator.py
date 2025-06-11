@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from typing_extensions import TypedDict
 from langchain_core.runnables import Runnable
 from langchain_core.prompts import PromptTemplate
@@ -66,27 +66,38 @@ class Translator:
         return translator_template | self.llm
 
     def translate(
-        self, text: str, source_language: Optional[str] = None, target_language: Optional[str] = None
-    ) -> Optional[str]:
+        self, text: List[str], source_language: Optional[str] = None, target_language: Optional[str] = None
+    ) -> List[str]:
         """
         Translate a given text to a target language. If the source language is already the same as the target,
         no translation is performed.
 
         Args:
-            text (str): The input text to translate.
+            text (List[str]): The input text to translate.
             source_language (str): The source language code (e.g., 'en', 'it').
             target_language (str): The target language code (e.g., 'en', 'it').
 
         Returns:
             Optional[str]: The translated text or None if input is empty or no translation needed.
         """
-        if not text.strip():
-            return None
-        initial_state = {
-            "text": text,
-            "source_language": source_language or self.default_source_language,
-            "target_language": target_language or self.default_target_language,
-            "translation": None,
-        }
-        final_state = self.graph.invoke(initial_state, config=self.config)  # type: ignore[arg-type]
-        return final_state.get("translation")
+        if not text or not isinstance(text, list) or not any(t.strip() for t in text):
+            return []
+
+        source_language = source_language or self.default_source_language
+        target_language = target_language or self.default_target_language
+        
+        if source_language == target_language:
+            return text
+        
+        inputs = [
+            {
+                "text": t,
+                "source_language": source_language,
+                "target_language": target_language,
+                "translation": None,
+            }
+            for t in text
+        ]
+
+        outputs = self.graph.batch(inputs, config=self.config)  # type: ignore[arg-type]
+        return [o.get("translation", "") for o in outputs]
