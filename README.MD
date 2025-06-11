@@ -5,6 +5,8 @@ This project provides a set of tools for translating the text content of EPUB fi
 - Extracts text from EPUB files.
 - Translates text using language models.
 - Preserves the original structure and formatting of the EPUB files.
+- Supports batch processing of multiple translations in a single EPUB file.
+- Allows customization of translation parameters such as source and target languages.
 
 # Requirements
 - Python 3.9 or higher
