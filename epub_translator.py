@@ -11,12 +11,12 @@ from utilities import (
 )
 
 
-def dummy_translate_text(text):
+def dummy_translate_text(text, **kwargs):
     return "[DUMMY]" + text
 
 
 def translate_with_translator(
-    text: List[str], translator: Translator
+    text: List[str], translator: Translator, **kwargs: dict
 ) -> List[str]:
     if not translator:
         raise ValueError("Translator instance is required for translation.")

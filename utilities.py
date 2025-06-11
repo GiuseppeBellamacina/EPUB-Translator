@@ -34,6 +34,7 @@ def translate_visible_text(
     buffer = TextBuffer(
         translate_func=lambda text: translate_text_func(text, **translate_kwargs),
         debug=debug,
+        batch_size=translate_kwargs.get("batch_size")
     )
 
     for tag in soup.find_all(string=True):
