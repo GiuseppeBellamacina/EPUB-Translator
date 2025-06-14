@@ -46,7 +46,7 @@ def translate_visible_text(
             and tag.strip()
         ):
             buffer.add(tag, str(tag))
-    buffer.flush(True)
+    buffer.flush()
 
     final_html = xml_decl + doctype_decl + str(soup)
     return final_html.encode("utf-8")

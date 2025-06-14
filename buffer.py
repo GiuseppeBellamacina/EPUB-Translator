@@ -36,10 +36,10 @@ class TextBuffer:
         if len(self.phrases) >= self.batch_size:
             self._flush_phrases()
 
-    def flush(self, force=False):
-        if force and self.current_phrase:
+    def flush(self):
+        if self.current_phrase:
             self._commit_phrase()
-        if force and self.phrases:
+        if self.phrases:
             self._flush_phrases()
 
     def _commit_phrase(self):
