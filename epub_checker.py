@@ -138,7 +138,7 @@ def check_book(book: epub.EpubBook, translated_book: epub.EpubBook) -> bool:
     Returns True if there are no issues, False otherwise.
     """
     print("Checking the EPUB book...\n")
-    print("- " * 40)
+    print("-" * 40)
     num_items_match = check_number_of_items(book, translated_book)
     print("-" * 40)
     nav_match = compare_nav(book, translated_book)

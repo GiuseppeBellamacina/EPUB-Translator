@@ -11,8 +11,8 @@ from utilities import (
 )
 
 
-def dummy_translate_text(text, **kwargs):
-    return "[DUMMY]" + text
+def dummy_translate_text(text, **kwargs) -> List[str]:
+    return ["[DUMMY] " + t for t in text]
 
 
 def translate_with_translator(
@@ -28,13 +28,13 @@ def translate_with_translator(
         text (str): The text to translate.
         translator (Translator): The Translator instance to use.
     Returns:
-        Optional[str]: The translated text or None if translation fails.
+        List[str]: The translated list of texts or an empty list if translation fails.
     """
     return translator.translate(text)
 
 
 def translate_book(
-    book: epub.EpubBook, translate_text: Callable, debug=False, **translate_kwargs
+    book: epub.EpubBook, translate_text: Callable, debug=False, **kwargs
 ) -> epub.EpubBook:
     """
     Translate the visible text of all ITEM_DOCUMENT items in the given EPUB book.
@@ -43,7 +43,7 @@ def translate_book(
     translated_book = epub.EpubBook()
     move_metadata(book, translated_book)
     translated_items = translate_and_add_items(
-        book, translated_book, translate_text, debug, **translate_kwargs
+        book, translated_book, translate_text, debug, **kwargs
     )
     set_translated_toc(book, translated_book, translated_items)
     set_translated_spine(book, translated_book, translated_items)
