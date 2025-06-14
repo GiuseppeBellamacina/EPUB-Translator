@@ -1,7 +1,6 @@
 import re
 from bs4.element import NavigableString, Tag
 
-
 class TextBuffer:
     def __init__(self, translate_func, debug=False, batch_size=1):
         self.translate_func = translate_func
@@ -22,11 +21,14 @@ class TextBuffer:
             last_tag_name = self._get_parent_name(last_tag)
 
             ends_with_delim = self._ends_with_delimiter(last_text)
-            same_tag = tag_name == last_tag_name
             blocking = tag_name in self.blocking_tags or last_tag_name in self.blocking_tags
-            repeated_tag = same_tag and tag_name not in self.invalid_tags
+            same_tag = tag_name == last_tag_name
+            valid_repeat = same_tag and tag_name not in self.invalid_tags
+            changed_tag = tag_name != last_tag_name
 
-            if ends_with_delim or blocking or repeated_tag:
+            force_boundary = ends_with_delim or blocking or valid_repeat or changed_tag
+
+            if force_boundary:
                 self._commit_phrase()
 
         self.current_phrase.append((tag, text))
@@ -49,7 +51,7 @@ class TextBuffer:
         if not self.phrases:
             return
 
-        original_texts = [" ".join(text for _, text in phrase).strip() for phrase in self.phrases]
+        original_texts = ["".join(text for _, text in phrase).strip() for phrase in self.phrases]
         translations = self.translate_func(original_texts)
         assert len(translations) == len(self.phrases), "Mismatch in batch size"
 
@@ -58,7 +60,7 @@ class TextBuffer:
 
             if self.debug:
                 print("—" * 20)
-                print(f"Original: {' '.join(t for _, t in phrase)}")
+                print(f"Original: {''.join(t for _, t in phrase)}")
                 print(f"Translated: {translated}")
                 print(f"Tags: {[self._get_parent_name(t) for t, _ in phrase]}")
 
