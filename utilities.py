@@ -11,7 +11,7 @@ def is_file_in_book(book: epub.EpubBook, filename: str) -> bool:
 
 
 def translate_visible_text(
-    html_content: bytes, translate_text_func: Callable, debug=False, **kwargs
+    html_content: bytes, translate_func: Callable, debug=False, **kwargs
 ) -> bytes:
     xml_decl = ""
     doctype_decl = ""
@@ -32,7 +32,7 @@ def translate_visible_text(
     invisible_parents = {"style", "script", "head", "meta", "[document]"}
 
     buffer = TextBuffer(
-        translate_func=lambda text: translate_text_func(text, **kwargs),
+        translate_func=lambda text: translate_func(text, **kwargs),
         debug=debug,
         batch_size=kwargs.get("batch_size", 1) if kwargs else 1,
     )
@@ -106,7 +106,7 @@ def get_number_of_items(book: epub.EpubBook) -> int:
 def translate_and_add_items(
     book: epub.EpubBook,
     translated_book: epub.EpubBook,
-    translate_text: Callable,
+    translate_func: Callable,
     debug=False,
     **kwargs,
 ) -> dict:
@@ -115,7 +115,7 @@ def translate_and_add_items(
     for item in tqdm(book.get_items(), desc="Translating", total=num_items):
         if item.get_type() == ITEM_DOCUMENT:
             html = translate_visible_text(
-                item.content, translate_text, debug=debug, **kwargs
+                item.content, translate_func, debug=debug, **kwargs
             )
             new_item = epub.EpubHtml(
                 uid=item.get_id(),
