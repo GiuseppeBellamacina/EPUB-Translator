@@ -1,6 +1,33 @@
-translated/
-__pycache__/
+# Data
+data/
+*.db
 *.epub
 *.pdf
-*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+backend/.env
+
+# Old files
+translated/
+sample_books/
 test.ipynb

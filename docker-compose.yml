@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - EPUB_DATA_DIR=/app/data
+      - EPUB_UPLOADS_DIR=/app/data/uploads
+      - EPUB_TRANSLATED_DIR=/app/data/translated
+      - EPUB_DB_PATH=/app/data/epub_translator.db
+      - EPUB_ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-secret}
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  data:

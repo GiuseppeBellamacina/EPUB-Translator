@@ -1,56 +1,96 @@
 # EPUB Translator
-This project provides a set of tools for translating the text content of EPUB files using language models.
 
-# Features
-- Extracts text from EPUB files.
-- Translates text using language models.
-- Preserves the original structure and formatting of the EPUB files.
-- Supports batch processing of multiple translations in a single EPUB file.
-- Allows customization of translation parameters such as source and target languages.
+Intelligent EPUB translation tool with a modern React UI and an agentic translation engine that maintains terminology consistency across your entire book.
 
-# Requirements
-- Python 3.9 or higher
-- Required Python packages listed in `requirements.txt`
-- An EPUB file to translate
-- A language model API key (if using an external translation service)
+## Features
 
-# Installation
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/GiuseppeBellamacina/EPUB-Translator.git
-   cd EPUB-Translator
-   ```
-2. Install the required Python packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **Agentic Translation Pipeline**: Context Analyzer → Translator → Reviewer (3-agent system)
+- **Glossary Consistency**: Auto-generated glossary maintained across all chapters, editable by the user
+- **Smart Chunking**: Hybrid paragraph + sliding window chunking with context overlap
+- **Multi-Provider LLM**: OpenAI, Anthropic, Ollama, or any OpenAI-compatible API
+- **Real-time Progress**: WebSocket-based live updates per chapter and chunk
+- **Side-by-Side Preview**: Compare original vs translated text
+- **Translation History**: Track all translated books with re-download capability
+- **Spacing Fix**: Post-processing eliminates excessive whitespace in rebuilt EPUBs
+- **Deployable**: Docker Compose setup (frontend + backend)
 
-# Usage
+## Architecture
 
-1. Place your EPUB file in the project directory.
-2. Update the `main.ipynb` file to specify the correct EPUB file name.
-3. Run the `main.ipynb` notebook to perform the translation.
-   ```bash
-   jupyter nbconvert --to notebook --execute main.ipynb
-   ```
-
-# Configuration
-You can configure the translation settings BY instantiating your proper `Translator` class in the `main.ipynb` file. Adjust the parameters such as source language, target language, and translation service as needed.
-# Example
-```python
-from langchain_openai import ChatOpenAI
-from translator import Translator
-
-llm = ChatOpenAI(
-    model_name='gpt-3.5-turbo',
-    temperature=0.0
-)
-
-translator = Translator(
-    llm=llm,
-    default_source_language='spanish',
-    default_target_language='chinese',
-)
+```
+├── frontend/       # React + Vite + TailwindCSS (Bun)
+├── backend/        # FastAPI + LangChain + SQLite
+│   ├── agents/     # Analyzer, Translator, Reviewer
+│   ├── services/   # Chunker, EPUB, HTML processor
+│   └── api/        # REST + WebSocket endpoints
+└── docker-compose.yml
 ```
 
-Remember to set your API keys in the environment variables or directly in the code if necessary.
+## Quick Start
+
+### Development (local)
+
+**Backend:**
+
+```bash
+cd backend
+uv sync
+cp .env.example .env    # Edit with your encryption key
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+bun install
+bun run dev
+```
+
+Open http://localhost:3000
+
+### Docker
+
+```bash
+docker compose up --build
+```
+
+Frontend at http://localhost:3000, Backend at http://localhost:8000
+
+## Usage
+
+1. **Settings** → Add an LLM provider (OpenAI API key, Ollama URL, etc.)
+2. **Upload** → Drag & drop your EPUB file
+3. **Configure** → Select provider, model, languages
+4. **Translate** → Watch real-time progress, edit glossary if needed
+5. **Preview** → Side-by-side comparison of original vs translated
+6. **Download** → Get your translated EPUB
+
+## Translation Pipeline
+
+```
+EPUB Upload
+  → Context Analysis (genre, tone, characters, key terms)
+  → Auto-generate Glossary
+  → Per Chapter:
+      → Smart Chunking (paragraph boundaries, 600 token target, 2-block overlap)
+      → Translate (glossary-aware, context-aware)
+      → Review (consistency check, glossary violations)
+      → Retry if issues found
+  → Rebuild EPUB (spacing-normalized HTML)
+  → Validate & Save
+```
+
+## Supported Providers
+
+| Provider  | Type  | Notes                                                     |
+| --------- | ----- | --------------------------------------------------------- |
+| OpenAI    | Cloud | GPT-4o, GPT-4o-mini, etc.                                 |
+| Anthropic | Cloud | Claude 3.5, Claude 4, etc.                                |
+| Ollama    | Local | Any model (llama3, mistral, etc.)                         |
+| Custom    | Any   | Any OpenAI-compatible endpoint (vLLM, LMStudio, Together) |
+
+## Requirements
+
+- Python 3.11+ with [uv](https://docs.astral.sh/uv/)
+- Bun 1.0+ (or Node.js 18+)
+- Docker (optional, for deployment)

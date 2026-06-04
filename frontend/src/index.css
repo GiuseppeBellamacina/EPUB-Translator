@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (Tailwind v4) — toggled via `.dark` on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --brand-accent: #111111;
+}
+
+html {
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+  color: #1a1a1a;
+  background: #ffffff;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.dark body {
+  color: #ededed;
+  background: #0a0a0a;
+}
+
+/* Refined custom scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 140, 140, 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(140, 140, 140, 0.3);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(140, 140, 140, 0.5);
+}
+
+@layer utilities {
+  /* Flat elevated surface for cards/panels */
+  .surface {
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+  }
+  .dark .surface {
+    background: #111111;
+    border: 1px solid #262626;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.25s ease both;
+}

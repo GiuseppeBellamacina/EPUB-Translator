@@ -1,7 +1,0 @@
-jupyter
-bs4
-ebooklib
-langchain
-langchain_core
-langchain_openai
-langchain_ollama
