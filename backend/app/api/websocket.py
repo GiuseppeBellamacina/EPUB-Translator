@@ -141,12 +141,33 @@ async def translate_ws(websocket: WebSocket, book_id: int):
         )
 
         # Run translation with progress streaming
+        # Create a background task to listen for the cancel message
+        async def listen_for_cancel():
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    if msg.get("action") == "stop":
+                        pipeline.cancel()
+                        await websocket.send_json(
+                            {"event": "cancelled", "message": "Translation cancelled"}
+                        )
+                        break
+            except WebSocketDisconnect:
+                pipeline.cancel()
+            except Exception:
+                pass
+
+        listener_task = asyncio.create_task(listen_for_cancel())
+
         try:
             translated_chapters: dict[int, dict] = {}
             output_path: str | None = None
             async for progress in EpubService.translate_book(
                 epub_book, pipeline, existing_glossary
             ):
+                if pipeline._cancelled:
+                    break
+
                 # Capture per-chapter HTML for preview/DB persistence
                 if progress.event_type == "chapter_saved":
                     translated_chapters[progress.data["order_index"]] = {
@@ -171,21 +192,6 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                         "data": client_data,
                     }
                 )
-
-                # Check for cancel message (non-blocking)
-                try:
-                    msg = await asyncio.wait_for(websocket.receive_json(), timeout=0.01)
-                    if msg.get("action") == "stop":
-                        pipeline.cancel()
-                        await websocket.send_json(
-                            {"event": "cancelled", "message": "Translation cancelled"}
-                        )
-                        break
-                except asyncio.TimeoutError:
-                    pass
-                except WebSocketDisconnect:
-                    pipeline.cancel()
-                    return
 
             # Update book status on completion
             async with async_session() as db:
@@ -251,6 +257,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                     await db.commit()
 
         finally:
+            listener_task.cancel()
             active_jobs.pop(book_id, None)
 
     except WebSocketDisconnect:
