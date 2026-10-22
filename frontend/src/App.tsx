@@ -4,7 +4,7 @@ import { UploadPage } from "./pages/UploadPage";
 import { TranslatePage } from "./pages/TranslatePage";
 import { PreviewPage } from "./pages/PreviewPage";
 import { HistoryPage } from "./pages/HistoryPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { ProvidersPage } from "./pages/ProvidersPage";
 
 export default function App() {
   return (
@@ -15,7 +15,7 @@ export default function App() {
           <Route path="/translate/:bookId" element={<TranslatePage />} />
           <Route path="/preview/:bookId" element={<PreviewPage />} />
           <Route path="/library" element={<HistoryPage />} />
-          <Route path="/providers" element={<SettingsPage />} />
+          <Route path="/providers" element={<ProvidersPage />} />
           {/* old addresses */}
           <Route path="/history" element={<Navigate to="/library" replace />} />
           <Route path="/settings" element={<Navigate to="/providers" replace />} />

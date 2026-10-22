@@ -61,7 +61,14 @@ Monorepo: `backend/` (FastAPI + LangChain/LangGraph + async SQLAlchemy/aiosqlite
 - **Fonts**: metric-compatible substitutes (Carlito for Calibri, Caladea for Cambria, Liberation for Arial/Times/Courier). They are copied *without GSUB* at image build (`scripts/strip_ligatures.py`), because MuPDF writes unusable ToUnicode entries for ligatures, which would break copy/search.
 - **Limits**: scanned PDFs (no text layer) are rejected, and text drawn as images stays untranslated.
 
-Progress events are forwarded to the client as `{"event": event_type, chapter_index, total_chapters, chunk_index, total_chunks, message, data}` (bulky `translations`/`translated_html` stripped). The frontend consumes them in `src/hooks/useTranslationWs.ts`, and event names are a contract with that hook. Book statuses: `uploaded`, `translating`, `paused` (resumable), `completed`, `failed` (finished with incomplete units or crashed; also resumable).
+Progress events are forwarded to the client as `{"event": event_type, chapter_index, total_chapters, chunk_index, total_chunks, message, data, ts}` (bulky `translations`/`translated_html` stripped). `src/hooks/useTranslationWs.ts` keeps the raw events (newest first). `src/lib/jobEvents.ts` derives the live chunks (`liveChunks`, using `chunk_translated.data.source_text`/`translated_text` and the review events) and the activity rows (`logEntries`). Event names are a contract with that file.
+
+**Frontend design system**:
+- **Tokens**: CSS variables in `src/index.css`, exposed as Tailwind colors via `@theme inline`: `paper`, `surface`, `tint`, `ink`, `muted`, `faint`, `line`, `accent`, `warn`, `danger`, `violet`. `.dark` swaps the values. Use these, never raw grays.
+- **Fonts**: `font-serif` (Newsreader) for headings and numbers; Inter for the UI; `font-mono` for model ids.
+- **Primitives**: `components/ui.tsx` (`Button`, `Card`, `Page`, `Heading`, `StatusPill`) and `lib/styles.ts` (`buttonClass`, `inputClass`; non-component exports live outside `.tsx` because of react-refresh).
+- **Model and provider pickers**: `ModelCombobox` and `ProviderSelect` (Headless UI). `ProviderLogo` (brand marks from `@lobehub/icons-static-svg`, picked from provider type, OpenRouter URL or `vendor/model` prefix).
+- **Visual checks**: Chrome automation may be unavailable. Instead, take screenshots with Playwright in Docker (`mcr.microsoft.com/playwright`) on the `epub_translator_default` network, using the frontend container's IP (the Vite dev server only accepts localhost/IP hosts). Book statuses: `uploaded`, `translating`, `paused` (resumable), `completed`, `failed` (finished with incomplete units or crashed; also resumable).
 
 New DB columns are added automatically by `init_db` (`ALTER TABLE ADD COLUMN` for missing nullable columns); anything more complex needs a real migration.
 

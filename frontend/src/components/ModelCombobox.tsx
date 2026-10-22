@@ -31,6 +31,8 @@ interface Props {
   emptyLabel?: string;
   onLoaded?: (models: ModelOption[]) => void;
   onError?: (message: string) => void;
+  /** Show the listing error under the field (off when the parent shows it). */
+  showError?: boolean;
 }
 
 const FREE_FILTER_MIN = 30;
@@ -57,6 +59,7 @@ export function ModelCombobox({
   emptyLabel,
   onLoaded,
   onError,
+  showError = true,
 }: Props) {
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +133,7 @@ export function ModelCombobox({
               models === null ? "Loading models…" : (emptyLabel ?? "Search or type a model id")
             }
             onChange={(e) => setQuery(e.target.value)}
+            onFocus={(e) => e.target.select()}
           />
           <span className="absolute inset-y-0 right-2 flex items-center gap-1">
             {models === null ? (
@@ -175,14 +179,6 @@ export function ModelCombobox({
               </button>
             </div>
           )}
-          {offerTyped && (
-            <ComboboxOption
-              value={typed}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm data-focus:bg-tint"
-            >
-              Use <span className="font-mono text-[13px]">{typed}</span>
-            </ComboboxOption>
-          )}
           {options.map((m) => {
             const p = price(m);
             return (
@@ -212,13 +208,21 @@ export function ModelCombobox({
               </ComboboxOption>
             );
           })}
+          {offerTyped && (
+            <ComboboxOption
+              value={typed}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm data-focus:bg-tint"
+            >
+              Use <span className="font-mono text-[13px]">{typed}</span>
+            </ComboboxOption>
+          )}
           {models !== null && !options.length && !offerTyped && (
             <div className="px-2.5 py-2 text-sm text-faint">No model matches.</div>
           )}
         </ComboboxOptions>
       </Combobox>
 
-      {error ? (
+      {error && showError ? (
         <p className="m-0 text-xs text-warn">{error} — you can still type a model id.</p>
       ) : (
         (hint || selected) && (
