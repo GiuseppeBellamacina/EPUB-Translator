@@ -1,14 +1,29 @@
 const API_BASE = "/api";
 
+const STATUS_MESSAGES: Record<number, string> = {
+  413: "File too large for the server",
+  502: "Backend unreachable",
+  504: "The server took too long to answer",
+};
+
+/** Readable error from any failed response: FastAPI JSON or a proxy's HTML page. */
+async function errorFrom(res: Response): Promise<Error> {
+  const body = await res.text();
+  try {
+    const detail = JSON.parse(body).detail;
+    if (detail) return new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  } catch {
+    // not JSON: e.g. nginx's HTML error pages
+  }
+  return new Error(`${STATUS_MESSAGES[res.status] ?? res.statusText ?? "Request failed"} (HTTP ${res.status})`);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || res.statusText);
-  }
+  if (!res.ok) throw await errorFrom(res);
   return res.json();
 }
 
@@ -38,7 +53,7 @@ export const api = {
       method: "POST",
       body: form,
     });
-    if (!res.ok) throw new Error((await res.json()).detail);
+    if (!res.ok) throw await errorFrom(res);
     return res.json();
   },
   getPreview: (bookId: number, chapter: number) =>
