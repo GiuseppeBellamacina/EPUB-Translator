@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
@@ -74,6 +76,8 @@ async def test_translated_pdf_keeps_layout_and_replaces_text(llm, sample_pdf):
             if s["flags"] & 16
         ]
         assert any("SHIPS" in t for t in bold)
+    # substitute fonts are subset, not embedded whole (Liberation Serif alone is ~400 KB)
+    assert Path(events[-1].data["output_path"]).stat().st_size < 150_000
 
 
 def test_continuation_blocks_are_merged(tmp_path):
