@@ -54,3 +54,44 @@ async def test_bootstrap_upserts_and_updates_key(db, tmp_path, monkeypatch):
     assert decrypt_api_key(rows["router"].api_key_encrypted) == "or-2"
     assert rows["router"].params == {"structured_output_method": "json_mode"}
     assert rows["fake"].api_key_encrypted is None
+
+
+async def test_bootstrap_never_takes_over_user_providers(db, tmp_path, monkeypatch):
+    env, config = tmp_path / ".env", tmp_path / "config.yaml"
+    config.write_text(CONFIG)
+    env.write_text("OPENROUTER-API-KEY=or-1\n")
+    monkeypatch.setattr(bootstrap.settings, "config_file", config)
+    monkeypatch.setattr(bootstrap.settings, "env_file", env)
+    async with async_session() as s:
+        s.add(ProviderConfig(name="router", provider_type="openai", source="user"))
+        await s.commit()
+        assert await bootstrap.bootstrap_providers(s) == ["fake"]
+    async with async_session() as s:
+        rows = {p.name: p for p in (await s.execute(select(ProviderConfig))).scalars()}
+    assert rows["router"].provider_type == "openai" and rows["router"].source == "user"
+    assert rows["fake"].source == "config"
+
+
+def test_update_provider_keeps_key_unless_given(db):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/providers", json={"name": "p", "provider_type": "openai", "api_key": "sk-1"}
+        ).json()
+        assert created["source"] == "user"
+        url = f"/api/providers/{created['id']}"
+        updated = client.put(url, json={"default_model": "gpt-4.1-mini"}).json()
+        assert updated["default_model"] == "gpt-4.1-mini" and updated["name"] == "p"
+        assert client.put(url, json={"name": "q"}).status_code == 200
+        assert client.put("/api/providers/999", json={"name": "x"}).status_code == 404
+
+    import asyncio
+
+    async def key():
+        async with async_session() as s:
+            return (await s.get(ProviderConfig, created["id"])).api_key_encrypted
+
+    assert decrypt_api_key(asyncio.run(key())) == "sk-1"

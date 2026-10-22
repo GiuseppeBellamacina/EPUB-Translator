@@ -20,6 +20,7 @@ from app.api.schemas import (
     ProviderCreate,
     ProviderModelsRequest,
     ProviderResponse,
+    ProviderUpdate,
     TestConnectionRequest,
 )
 from app.core.bootstrap import load_config
@@ -58,6 +59,26 @@ async def create_provider(data: ProviderCreate, db: AsyncSession = Depends(get_d
         params=data.params,
     )
     db.add(provider)
+    await db.commit()
+    await db.refresh(provider)
+    return provider
+
+
+@router.put("/providers/{provider_id}", response_model=ProviderResponse)
+async def update_provider(
+    provider_id: int, data: ProviderUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Edit a provider. Editing a config.yaml provider makes it user-owned (bootstrap skips it)."""
+    provider = await db.get(ProviderConfig, provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    changes = data.model_dump(exclude_unset=True)
+    api_key = changes.pop("api_key", None)
+    for field, value in changes.items():
+        setattr(provider, field, value)
+    if api_key is not None:  # None keeps the stored key, "" clears it
+        provider.api_key_encrypted = encrypt_api_key(api_key) if api_key else None
+    provider.source = "user"
     await db.commit()
     await db.refresh(provider)
     return provider
