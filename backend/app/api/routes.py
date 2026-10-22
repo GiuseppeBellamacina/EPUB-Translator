@@ -2,6 +2,7 @@
 
 import asyncio
 import shutil
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -23,12 +24,21 @@ from app.api.schemas import (
     ProviderUpdate,
     TestConnectionRequest,
 )
+from app.api.websocket import active_jobs, recent_events, run_started
 from app.core.bootstrap import load_config
 from app.core.config import settings
 from app.core.encryption import decrypt_api_key, encrypt_api_key
 from app.core.llm_factory import LLMConfig, test_llm_connection
 from app.db.database import get_db
-from app.db.models import Book, BookStatus, Chapter, ChapterStatus, GlossaryEntry, ProviderConfig
+from app.db.models import (
+    Book,
+    BookStatus,
+    Chapter,
+    ChapterStatus,
+    GlossaryEntry,
+    ProviderConfig,
+    TranslationJob,
+)
 from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
@@ -248,6 +258,50 @@ async def get_preview(book_id: int, chapter_index: int = 0, db: AsyncSession = D
         "original_text": doc.text(chapter_index),
         "translated_text": translated_text,
         "original_html": doc.render(chapter_index, None) or "",
+    }
+
+
+@router.get("/books/{book_id}/progress")
+async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
+    """Run state of a book's translation, also usable after a page reload."""
+    book = await db.get(Book, book_id)
+    if not book:
+        raise HTTPException(404, "Book not found")
+    rows = (
+        await db.execute(
+            select(Chapter.order_index, Chapter.status).where(Chapter.book_id == book_id)
+        )
+    ).all()
+    completed = sum(status == ChapterStatus.completed for _, status in rows)
+    running = book_id in active_jobs
+    job = (
+        await db.execute(
+            select(TranslationJob)
+            .where(TranslationJob.book_id == book_id)
+            .order_by(TranslationJob.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    eta = None
+    if running and book_id in run_started:
+        start, done_at_start = run_started[book_id]
+        done_now = completed - done_at_start
+        if done_now > 0:
+            eta = (time.time() - start) / done_now * (book.total_chapters - completed)
+
+    return {
+        "status": book.status.value if book.status else "uploaded",
+        "running": running,
+        "total_units": book.total_chapters,
+        "completed_units": completed,
+        "failed_units": sorted(i for i, s in rows if s == ChapterStatus.failed),
+        "in_flight": (
+            sorted(i for i, s in rows if s == ChapterStatus.translating) if running else []
+        ),
+        "started_at": job.started_at.isoformat() if job and job.started_at else None,
+        "eta_seconds": eta,
+        "recent_events": list(reversed(recent_events.get(book_id, []))),
     }
 
 
