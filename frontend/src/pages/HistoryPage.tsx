@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, Download, Eye, ListOrdered, Loader2 } from "lucide-react";
+import { BookOpen, Download, Eye, ListOrdered, Loader2, Trash2 } from "lucide-react";
 import { api, type Book, type QueueState } from "../lib/api";
 import { languageName } from "../lib/runSettings";
 import { buttonClass } from "../lib/styles";
@@ -32,6 +32,19 @@ export function HistoryPage() {
   const waiting = new Set(
     queue?.items.filter((i) => i.status !== "done" && i.status !== "failed").map((i) => i.book_id),
   );
+  const pending = new Set(queue?.items.filter((i) => i.status === "pending").map((i) => i.book_id));
+  const remove = async (book: Book) => {
+    const name = book.filename.replace(/\.(epub|pdf)$/i, "");
+    const note = book.status === "completed" ? " and its translation" : "";
+    if (!window.confirm(`Delete "${name}"${note}? Progress and glossary are removed too.`)) return;
+    try {
+      await api.deleteBook(book.id);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not delete the book");
+    }
+    setSelected((s) => s.filter((x) => x !== book.id));
+    load();
+  };
   const toggle = (id: number, on: boolean) =>
     setSelected((s) => (on ? [...s, id] : s.filter((x) => x !== id)));
 
@@ -114,7 +127,7 @@ export function HistoryPage() {
                       </div>
                     )}
                   </div>
-                  <StatusPill status={queued && book.status !== "translating" ? "queued" : book.status} />
+                  <StatusPill status={pending.has(book.id) && book.status !== "translating" ? "queued" : book.status} />
                   <div className="flex gap-2">
                     {book.status === "completed" ? (
                       <>
@@ -129,6 +142,17 @@ export function HistoryPage() {
                       <Link to={`/translate/${book.id}`} className={buttonClass("primary", "sm")}>
                         {book.status === "uploaded" && !queued ? "Translate" : "Open"}
                       </Link>
+                    )}
+                    {book.status !== "translating" && (
+                      <button
+                        type="button"
+                        onClick={() => remove(book)}
+                        aria-label={`Delete ${book.filename}`}
+                        title="Delete"
+                        className="rounded-full p-2 text-faint hover:bg-danger-soft hover:text-danger"
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
                     )}
                   </div>
                 </Card>
