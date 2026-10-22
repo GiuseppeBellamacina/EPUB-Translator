@@ -105,6 +105,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(entry),
     }),
+
+  // Queue: books translated one after another on the server
+  getQueue: () => request<QueueState>("/queue"),
+  addToQueue: (bookIds: number[], config: RunConfig, keepGlossary: boolean) =>
+    request<{ queued: number }>("/queue", {
+      method: "POST",
+      body: JSON.stringify({ ...config, book_ids: bookIds, keep_glossary: keepGlossary }),
+    }),
+  startQueue: () => request("/queue/start", { method: "POST" }),
+  stopQueue: () => request("/queue/stop", { method: "POST" }),
+  removeFromQueue: (itemId: number) => request(`/queue/${itemId}`, { method: "DELETE" }),
+  clearFinished: () => request("/queue", { method: "DELETE" }),
 };
 
 // Types
@@ -263,4 +275,21 @@ export interface RunConfig {
   source_language?: string | null;
   target_language?: string | null;
   style_instructions: string;
+}
+
+export interface QueueItem {
+  id: number;
+  book_id: number;
+  filename: string;
+  status: "pending" | "running" | "paused" | "done" | "failed";
+  error: string | null;
+  keep_glossary: boolean;
+  config: RunConfig;
+  completed_units: number;
+  total_units: number;
+}
+
+export interface QueueState {
+  running: boolean;
+  items: QueueItem[];
 }
