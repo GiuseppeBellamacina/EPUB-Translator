@@ -7,11 +7,19 @@ Supported providers:
 - ollama: Local Ollama instance
 - custom: Any OpenAI-compatible API endpoint
 - fake: Deterministic test provider (wraps sentences with BAU.../...MIAO)
+
+Resilience: an optional client-side rate limiter (requests per second) throttles
+calls, and the provider SDKs retry 429/5xx with exponential backoff (``max_retries``).
 """
 
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.rate_limiters import InMemoryRateLimiter
+from langchain_core.runnables import Runnable
+
+# Reasoning models only accept the default temperature.
+_NO_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
 class LLMConfig:
@@ -26,6 +34,9 @@ class LLMConfig:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        requests_per_second: float | None = None,
+        max_retries: int | None = None,
+        structured_output_method: str | None = None,
         **extra_params: Any,
     ):
         self.provider = provider.lower()
@@ -35,20 +46,32 @@ class LLMConfig:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.top_p = top_p
+        self.requests_per_second = requests_per_second
+        self.max_retries = max_retries
+        self.structured_output_method = structured_output_method
         self.extra_params = extra_params
 
 
 def create_llm(config: LLMConfig) -> BaseChatModel:
     """Create a LangChain chat model from config."""
 
-    params: dict[str, Any] = {
-        "model": config.model,
-        "temperature": config.temperature,
-    }
+    params: dict[str, Any] = {"model": config.model}
+    if not config.model.startswith(_NO_TEMPERATURE_PREFIXES):
+        params["temperature"] = config.temperature
     if config.max_tokens is not None:
         params["max_tokens"] = config.max_tokens
     if config.top_p is not None:
         params["top_p"] = config.top_p
+    if config.requests_per_second:
+        params["rate_limiter"] = InMemoryRateLimiter(
+            requests_per_second=config.requests_per_second,
+            check_every_n_seconds=0.1,
+            max_bucket_size=1,
+        )
+    if config.structured_output_method:
+        params["metadata"] = {"structured_output_method": config.structured_output_method}
+    if config.max_retries is not None and config.provider in ("openai", "anthropic", "custom"):
+        params["max_retries"] = config.max_retries
 
     match config.provider:
         case "fake":
@@ -100,6 +123,31 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
 
         case _:
             raise ValueError(f"Unsupported provider: {config.provider}")
+
+
+def structured(llm: BaseChatModel, schema: type) -> Runnable:
+    """``llm.with_structured_output`` honouring the provider's configured method.
+
+    Some OpenAI-compatible endpoints (e.g. free OpenRouter models) lack ``json_schema``
+    support and need ``function_calling`` or ``json_mode``.
+    """
+    method = (llm.metadata or {}).get("structured_output_method")
+    if method:
+        return llm.with_structured_output(schema, method=method)
+    return llm.with_structured_output(schema)
+
+
+def structured_chain(prompt: Runnable, llm: BaseChatModel, schema: type) -> Runnable:
+    """``prompt | structured output`` retried as a whole on any failure.
+
+    Covers what SDK retries don't: unparsable/invalid structured output and errors
+    that outlast the SDK's own backoff.
+    """
+    from app.core.config import settings
+
+    return (prompt | structured(llm, schema)).with_retry(
+        stop_after_attempt=max(1, settings.chain_retries), wait_exponential_jitter=True
+    )
 
 
 async def test_llm_connection(config: LLMConfig) -> dict[str, Any]:

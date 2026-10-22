@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # Translation defaults; overridable by config.yaml `translation:` and per provider `params`
+    max_concurrency: int = 2  # chapters translated in parallel
+    requests_per_second: float = 0.5  # client-side rate limit per job (0 = unlimited)
+    llm_max_retries: int = 5  # SDK retries with backoff (honours Retry-After on 429)
+    chain_retries: int = 3  # retries of a whole agent call (parse errors, residual failures)
+    enable_review: bool = True
+
+    def apply_overrides(self, overrides: dict) -> None:
+        for key, value in overrides.items():
+            if key in type(self).model_fields:
+                setattr(self, key, value)
+
     @property
     def uploads_dir(self) -> Path:
         return self.data_dir / "uploads"

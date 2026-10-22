@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.api.websocket import ws_router
-from app.core.bootstrap import bootstrap_providers
+from app.core.bootstrap import bootstrap_providers, load_config
 from app.core.config import settings
 from app.db.database import async_session, init_db
 
@@ -24,6 +24,7 @@ app.include_router(ws_router)
 @app.on_event("startup")
 async def startup():
     settings.ensure_dirs()
+    settings.apply_overrides(load_config().get("translation") or {})
     await init_db()
     async with async_session() as db:
         await bootstrap_providers(db)

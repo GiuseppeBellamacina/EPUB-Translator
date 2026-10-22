@@ -10,7 +10,9 @@ providers:
     type: custom
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
-    default_model: nvidia/nemotron-3-super-120b-a12b:free
+    default_model: nvidia/nemotron-3.5-super-vl:free
+    params:
+      requests_per_second: 0.25 # free tier allows ~20 requests/minute
 
   # Paid but cheap: use sparingly.
   - name: openai-cheap
@@ -22,3 +24,12 @@ providers:
   - name: fake
     type: fake
     default_model: fake-meow
+
+# Defaults for every job; a provider's `params` can override requests_per_second,
+# max_retries and structured_output_method (function_calling | json_mode | json_schema).
+translation:
+  max_concurrency: 2 # chapters translated in parallel
+  requests_per_second: 0.5 # client-side throttle per job (0 = unlimited)
+  llm_max_retries: 5 # SDK retries with exponential backoff on 429/5xx
+  chain_retries: 3 # whole-call retries (invalid structured output, residual errors)
+  enable_review: true # reviewer pass per chunk (doubles the calls)

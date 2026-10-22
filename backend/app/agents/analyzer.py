@@ -6,6 +6,7 @@ and builds an initial glossary of key terms.
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.core.llm_factory import structured_chain
 from app.models.schemas import AnalysisResult
 
 ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
@@ -50,7 +51,7 @@ async def analyze_context(
     Returns:
         AnalysisResult with genre, tone, characters, key terms, and summary
     """
-    chain = ANALYSIS_PROMPT | llm.with_structured_output(AnalysisResult)
+    chain = structured_chain(ANALYSIS_PROMPT, llm, AnalysisResult)
 
     # Truncate if too long (analysis doesn't need full text, first ~3000 tokens suffice)
     max_chars = 12000

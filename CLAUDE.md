@@ -48,6 +48,11 @@ Monorepo: `backend/` (FastAPI + LangChain/LangGraph + async SQLAlchemy/aiosqlite
 
 Progress events are forwarded to the client as `{"event": event_type, chapter_index, total_chapters, chunk_index, total_chunks, message, data}`; the frontend consumes them in `src/hooks/useTranslationWs.ts` and stores them in the Zustand store (`src/stores/appStore.ts`). Event names are a contract between `pipeline.py`/`epub_service.py`/`websocket.py` and that hook.
 
-**LLM providers** (`app/core/llm_factory.py`): `create_llm(LLMConfig)` switches on `provider` (openai, anthropic, ollama, custom OpenAI-compatible, fake). Provider configs are DB rows (`ProviderConfig`) managed via REST in `app/api/routes.py`.
+**LLM providers** (`app/core/llm_factory.py`): `create_llm(LLMConfig)` switches on `provider` (openai, anthropic, ollama, custom OpenAI-compatible, fake). Provider configs are DB rows (`ProviderConfig`) managed via REST in `app/api/routes.py` and by the bootstrap. Resilience is layered:
+- a client-side `InMemoryRateLimiter` (`requests_per_second`)
+- SDK retries with backoff on 429/5xx (`llm_max_retries`)
+- `structured_chain(prompt, llm, Schema)`, which every agent must use instead of `llm.with_structured_output`. It applies the provider's `structured_output_method` (stored in `llm.metadata`) and retries the whole call `chain_retries` times.
+
+Defaults live in `Settings`, `config.yaml` `translation:` overrides them at startup, and a provider's `params` overrides them per job. Reasoning models (`gpt-5*`, `o*`) are created without `temperature`.
 
 **REST** (`app/api/routes.py`, mounted at `/api`): providers CRUD, book upload/list/download/preview, glossary editing. Frontend calls go through `src/lib/api.ts`.

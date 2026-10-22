@@ -33,7 +33,7 @@ DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
         "name": "openrouter",
         "type": "custom",
         "base_url": OPENROUTER_BASE_URL,
-        "default_model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "default_model": "nvidia/nemotron-3.5-super-vl:free",
     },
     "ANTHROPIC_API_KEY": {
         "name": "anthropic",
