@@ -118,6 +118,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                 chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
                 max_retries=1,
                 style_instructions=data.get("style_instructions", ""),
+                enable_review=data.get("enable_review", settings.enable_review),
             )
 
             active_jobs[book_id] = pipeline
@@ -238,7 +239,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                             )
 
                     # Save glossary to DB
-                    for entry in pipeline.glossary:
+                    for entry in pipeline.glossary.entries:
                         existing = await db.execute(
                             select(GlossaryEntry).where(
                                 GlossaryEntry.book_id == book_id,

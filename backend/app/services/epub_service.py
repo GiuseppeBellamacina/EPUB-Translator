@@ -104,7 +104,7 @@ class EpubService:
                                 "characters": analysis.characters,
                                 "summary": analysis.summary,
                             },
-                            "glossary": [e.model_dump() for e in pipeline.glossary],
+                            "glossary": [e.model_dump() for e in pipeline.glossary.entries],
                         },
                     )
                 except Exception as e:
@@ -180,7 +180,7 @@ class EpubService:
             data={
                 "output_path": str(output_path),
                 "filename": output_filename,
-                "glossary": [e.model_dump() for e in pipeline.glossary],
+                "glossary": [e.model_dump() for e in pipeline.glossary.entries],
             },
         )
 

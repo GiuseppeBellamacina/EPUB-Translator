@@ -26,6 +26,18 @@ async def test_translate_book_end_to_end(llm, sample_epub):
     assert all("BAU" in t and "MIAO" in t for t in texts)
 
 
+async def test_failed_chunk_is_not_stored_as_translated(llm, sample_epub, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.chain_retries", 1)
+    llm.fail[TranslationResult] = [RuntimeError("boom")]  # first chunk of chapter 1
+    book = EpubService.load_book(sample_epub)
+    events = await _run(TranslationPipeline(llm=llm, enable_review=False), book)
+
+    done = [e for e in events if e.event_type == "chapter_done"]
+    assert done[0].chapter_index == 0 and done[0].data["failed_chunks"] == [0]
+    assert all(t is None for t in done[0].data["translated_blocks"])
+    assert all(t is not None for e in done[1:] for t in e.data["translated_blocks"])
+
+
 async def test_rejected_review_triggers_one_retry(llm, sample_epub):
     llm.handlers[ReviewResult] = lambda text, n: ReviewResult(approved=n > 1, issues=["bad"])
     book = EpubService.load_book(sample_epub)
