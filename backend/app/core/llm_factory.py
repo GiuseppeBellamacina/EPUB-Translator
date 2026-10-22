@@ -19,6 +19,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_core.runnables import Runnable
 
+from app.core.config import settings
+
 # Reasoning models only accept the default temperature.
 _NO_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 _CLAUDE_VERSION = re.compile(r"claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)")
@@ -87,6 +89,17 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
         params["temperature"] = config.temperature
     if config.max_tokens is not None:
         params["max_tokens"] = config.max_tokens
+    elif config.provider in ("openai", "anthropic", "custom"):
+        # Bound every call: a model stuck repeating itself otherwise runs to its own
+        # maximum (32k tokens, minutes) before failing. Reasoning models get more
+        # room because thinking counts against the same limit.
+        params["max_tokens"] = (
+            settings.llm_max_output_tokens
+            if accepts_temperature(config.provider, config.model)
+            else settings.llm_reasoning_max_output_tokens
+        )
+    if config.provider in ("openai", "anthropic", "custom") and settings.llm_timeout:
+        params["timeout"] = settings.llm_timeout  # per request; SDK default is 10 minutes
     if config.top_p is not None:
         params["top_p"] = config.top_p
     if config.requests_per_second:
@@ -170,8 +183,6 @@ def structured_chain(prompt: Runnable, llm: BaseChatModel, schema: type) -> Runn
     Covers what SDK retries don't: unparsable/invalid structured output and errors
     that outlast the SDK's own backoff.
     """
-    from app.core.config import settings
-
     return (prompt | structured(llm, schema)).with_retry(
         stop_after_attempt=max(1, settings.chain_retries), wait_exponential_jitter=True
     )

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     requests_per_second: float = 0.5  # client-side rate limit per job (0 = unlimited)
     llm_max_retries: int = 5  # SDK retries with backoff (honours Retry-After on 429)
     chain_retries: int = 3  # retries of a whole agent call (parse errors, residual failures)
+    llm_max_output_tokens: int = 4096  # per call; a chunk is <= ~1000 source tokens
+    llm_reasoning_max_output_tokens: int = 16384  # reasoning models: thinking shares the cap
+    llm_timeout: float = 120  # seconds per request (0 = SDK default, 10 minutes)
     enable_review: bool = True
 
     # Model prices for cost estimates (LiteLLM's public list; "" = offline, bundled snapshot)
