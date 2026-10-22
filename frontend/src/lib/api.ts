@@ -44,9 +44,22 @@ export const api = {
   getPreview: (bookId: number, chapter: number) =>
     request<Preview>(`/books/${bookId}/preview?chapter_index=${chapter}`),
   downloadBook: (bookId: number) => `${API_BASE}/books/${bookId}/download`,
-  getEstimate: (bookId: number, refreshPrices = false) =>
-    request<CostEstimate>(
-      `/books/${bookId}/estimate${refreshPrices ? "?refresh_prices=true" : ""}`,
+  getEstimate: (
+    bookId: number,
+    options: { refreshPrices?: boolean; providerId?: number; model?: string } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (options.refreshPrices) query.set("refresh_prices", "true");
+    if (options.providerId !== undefined && options.model) {
+      query.set("provider_id", String(options.providerId));
+      query.set("model", options.model);
+    }
+    const qs = query.toString();
+    return request<CostEstimate>(`/books/${bookId}/estimate${qs ? `?${qs}` : ""}`);
+  },
+  getProviderModels: (providerId: number, refresh = false) =>
+    request<ModelOption[]>(
+      `/providers/${providerId}/models${refresh ? "?refresh=true" : ""}`,
     ),
 
   // Glossary
@@ -169,4 +182,12 @@ export interface CostEstimate {
   prices_fetched_at: number;
   prices_source: "live" | "cache" | "stale-cache" | "bundled";
   models: ModelEstimate[];
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  input_per_million: number | null;
+  output_per_million: number | null;
+  reasoning: boolean | null;
 }

@@ -31,7 +31,7 @@ export function CostEstimate({ bookId }: { bookId: number }) {
   const fetchEstimate = useCallback(
     (refresh: boolean) =>
       api
-        .getEstimate(bookId, refresh)
+        .getEstimate(bookId, { refreshPrices: refresh })
         .then((e) => {
           setEstimate(e);
           setError(null);
@@ -162,5 +162,48 @@ export function CostEstimate({ bookId }: { bookId: number }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/** One-line estimated cost of translating a book with the selected provider model. */
+export function ModelCost({
+  bookId,
+  providerId,
+  model,
+}: {
+  bookId: number;
+  providerId: number;
+  model: string;
+}) {
+  const [result, setResult] = useState<{ key: string; estimate: Estimate | null } | null>(
+    null,
+  );
+  const key = `${providerId}/${model}`;
+
+  useEffect(() => {
+    if (!model) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      api
+        .getEstimate(bookId, { providerId, model })
+        .then((estimate) => current && setResult({ key, estimate }))
+        .catch(() => current && setResult({ key, estimate: null }));
+    }, 300); // typed model ids: wait for a pause
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [bookId, providerId, model, key]);
+
+  if (!model || result?.key !== key) return null;
+  const row = result.estimate?.models[0];
+  if (!row) {
+    return <p className="text-[11px] text-gray-400">Cost estimate unavailable for this model.</p>;
+  }
+  return (
+    <p className="text-xs text-gray-600 dark:text-gray-300">
+      Estimated cost: <span className="font-medium">{formatCost(row.with_review.cost)}</span>{" "}
+      with review · {formatCost(row.without_review.cost)} without
+    </p>
   );
 }

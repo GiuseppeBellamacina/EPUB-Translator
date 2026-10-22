@@ -137,7 +137,7 @@ def estimate(
     with_review = usage(profile, target_language, review=True)
     without_review = usage(profile, target_language, review=False)
     rows = []
-    for provider, names in (models or DEFAULT_MODELS).items():
+    for provider, names in (DEFAULT_MODELS if models is None else models).items():
         for name in dict.fromkeys(names):  # dedupe, keep order
             price = prices.models.get(name)
             if price is None or price.provider != provider:

@@ -23,7 +23,7 @@ from app.api.schemas import (
 )
 from app.core.bootstrap import load_config
 from app.core.config import settings
-from app.core.encryption import encrypt_api_key
+from app.core.encryption import decrypt_api_key, encrypt_api_key
 from app.core.llm_factory import LLMConfig, test_llm_connection
 from app.db.database import get_db
 from app.db.models import Book, BookStatus, Chapter, ChapterStatus, GlossaryEntry, ProviderConfig
@@ -31,7 +31,8 @@ from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
-from app.services.pricing import get_prices
+from app.services.model_catalog import list_models, price_for
+from app.services.pricing import ModelPrice, PriceTable, get_prices
 
 router = APIRouter()
 
@@ -70,6 +71,23 @@ async def delete_provider(provider_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(provider)
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.get("/providers/{provider_id}/models")
+async def provider_models(
+    provider_id: int, refresh: bool = False, db: AsyncSession = Depends(get_db)
+):
+    """Chat models the provider serves, listed live from its API (cached a few minutes)."""
+    provider = await db.get(ProviderConfig, provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    api_key = decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
+    try:
+        return await list_models(
+            provider.provider_type, api_key, provider.base_url, await get_prices(), refresh
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Could not list models from {provider.name}: {e}")
 
 
 @router.post("/providers/test")
@@ -205,9 +223,14 @@ async def estimate_cost(
     book_id: int,
     target_language: str | None = None,
     refresh_prices: bool = False,
+    provider_id: int | None = None,
+    model: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Estimated translation cost per model, with current prices."""
+    """Estimated translation cost per model, with current prices.
+
+    With ``provider_id`` and ``model``, only that model (empty list if its price is unknown).
+    """
     book = await db.get(Book, book_id)
     if not book:
         raise HTTPException(404, "Book not found")
@@ -220,6 +243,35 @@ async def estimate_cost(
         book.token_profile = asdict(profile)
         await db.commit()
     profile = TokenProfile(**book.token_profile)
+    language = target_language or book.target_language
+    prices = await get_prices(force_refresh=refresh_prices)
+
+    if provider_id is not None and model:
+        provider = await db.get(ProviderConfig, provider_id)
+        if not provider:
+            raise HTTPException(404, "Provider not found")
+        price = price_for(provider.provider_type, model, prices)
+        if price is None and provider.provider_type == "custom":
+            # OpenAI-compatible routers (OpenRouter) publish prices in their model list
+            api_key = (
+                decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
+            )
+            try:
+                listed = await list_models("custom", api_key, provider.base_url, prices)
+            except Exception:
+                listed = []
+            option = next((m for m in listed if m["id"] == model), None)
+            if option and option["input_per_million"] is not None:
+                price = ModelPrice(
+                    "openai",
+                    option["input_per_million"] / 1e6,
+                    option["output_per_million"] / 1e6,
+                    reasoning=False,
+                )
+        if price is None:
+            return estimate(profile, prices, language, {})
+        single = PriceTable({model: price}, prices.fetched_at, prices.source)
+        return estimate(profile, single, language, {price.provider: [model]})
 
     # Models from config.yaml (pricing.models) plus the defaults of configured providers
     models = {p: list(names) for p, names in DEFAULT_MODELS.items()}
@@ -228,9 +280,7 @@ async def estimate_cost(
     for provider in providers.scalars():
         if provider.provider_type in models and provider.default_model:
             models[provider.provider_type].append(provider.default_model)
-
-    prices = await get_prices(force_refresh=refresh_prices)
-    return estimate(profile, prices, target_language or book.target_language, models)
+    return estimate(profile, prices, language, models)
 
 
 @router.get("/books/{book_id}/download")

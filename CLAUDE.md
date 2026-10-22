@@ -79,4 +79,11 @@ Defaults live in `Settings`, `config.yaml` `translation:` overrides them at star
 - **Token profile** (`services/cost_estimator.py`): `profile_document` walks the book's real chunks. It reuses `translation_service.analysis_text`/`lead_context_for`, so it counts what the pipeline actually sends. The profile is cached in `Book.token_profile`.
 - **Prompt sizes**: `usage` measures the real prompt templates. Approximations (target-language expansion, rejection rate, Claude tokenizer factor, thinking tokens) are module constants.
 - **Model rules** (`llm_factory`): `thinks_by_default` and `accepts_temperature` decide which models are billed for thinking (OpenAI reasoning models, Claude ≥ 5) and which get `temperature` (Claude Opus 4.7+ / 5.x reject it with a 400).
-- **Model list**: `config.yaml` `pricing.models`, plus the default models of configured providers.
+- **Model list**: `config.yaml` `pricing.models`, plus the default models of configured providers. With `provider_id` + `model` the endpoint estimates just that model.
+
+**Model picker** (`GET /api/providers/{id}/models`, `services/model_catalog.py`, `components/ModelPicker.tsx`): models are listed live from the provider's API.
+- **How each provider is listed**: OpenAI and Anthropic through their official SDKs; OpenAI-compatible routers such as OpenRouter through the OpenAI SDK with `base_url` (their listing includes prices); Ollama via `/api/tags`.
+- **Filtering**: OpenAI's list is reduced to chat models usable with chat completions; embeddings, audio, image, `-pro` and dated snapshots that have an alias are dropped.
+- **Prices**: `price_for` maps router names (`openai/gpt-4.1-mini`, `*:free`) to known prices.
+- **Caching**: 10 minutes per provider configuration.
+- **Fallbacks**: in the UI, a failed listing falls back to a free-text model id. `default_model` is only the preselection.
