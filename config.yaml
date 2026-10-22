@@ -1,1 +1,24 @@
-# Development config, filled in by issue #3 (provider bootstrap).
+# Development config, mounted read-only at /config/config.yaml.
+# Providers are upserted by name on backend startup. API keys are read from the
+# mounted .env (names like OPENAI-API-KEY or OPENAI_API_KEY both work); a provider
+# whose api_key_env is missing is skipped. Remove the `providers:` key entirely to
+# auto-create providers from whatever known keys are present.
+
+providers:
+  # Free, rate-limited (few requests/minute, small daily quota): use for dev runs.
+  - name: openrouter-free
+    type: custom
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    default_model: nvidia/nemotron-3-super-120b-a12b:free
+
+  # Paid but cheap: use sparingly.
+  - name: openai-cheap
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    default_model: gpt-4.1-nano
+
+  # Deterministic offline provider ("BAU ... MIAO"), no key needed.
+  - name: fake
+    type: fake
+    default_model: fake-meow

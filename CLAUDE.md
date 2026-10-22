@@ -30,7 +30,9 @@ $DC run --rm --no-deps backend pytest -m live                           # real-p
 
 ## Configuration
 
-Settings live in `app/core/config.py` (pydantic-settings, env prefix `EPUB_`). `EPUB_ENCRYPTION_KEY` encrypts provider API keys stored in SQLite. There is a single data directory: the repo-root `data/`, mounted at `/data` (`EPUB_DATA_DIR`); uploads, translated output and the DB all derive from it. Never mount anything under `/app` in compose besides the source itself, or Docker recreates host directories inside `backend/`. Schema is created with `Base.metadata.create_all` on startup; there are no migrations, so model changes need a DB reset or manual ALTER.
+Settings live in `app/core/config.py` (pydantic-settings, env prefix `EPUB_`). `EPUB_ENCRYPTION_KEY` encrypts provider API keys stored in SQLite. There is a single data directory: the repo-root `data/`, mounted at `/data` (`EPUB_DATA_DIR`); uploads, translated output and the DB all derive from it. Never mount anything under `/app` in compose besides the source itself, or Docker recreates host directories inside `backend/`.
+
+Provider bootstrap (`app/core/bootstrap.py`, run on startup): API keys come from the repo-root `.env`, mounted as a file at `EPUB_ENV_FILE` (not via compose `env_file`, since names like `OPENAI-API-KEY` are not valid env vars; names are normalized). `config.yaml` (mounted at `/config/config.yaml`) declares providers upserted by name; one whose `api_key_env` is missing is skipped. The dev defaults are `openrouter-free` (free, heavily rate-limited), `openai-cheap` (`gpt-4.1-nano`, paid — use sparingly) and `fake`. Tests point both files to nonexistent paths. Schema is created with `Base.metadata.create_all` on startup; there are no migrations, so model changes need a DB reset or manual ALTER.
 
 ## Architecture
 
