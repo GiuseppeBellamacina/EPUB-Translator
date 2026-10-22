@@ -4,6 +4,8 @@ Field descriptions are used directly by `llm.with_structured_output()` to steer
 the model, so keep them clear and action-oriented.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -46,14 +48,37 @@ class TranslationResult(BaseModel):
     )
 
 
-class ReviewResult(BaseModel):
-    approved: bool = Field(description="True if the translation is accurate and consistent")
-    issues: list[str] = Field(
-        default_factory=list, description="Specific problems found, empty if approved"
+class ReviewIssue(BaseModel):
+    severity: Literal["major", "minor"] = Field(
+        description=(
+            "major: meaning changed, content omitted or added, a glossary term not "
+            "followed, text left untranslated, or an inline placeholder lost. "
+            "minor: style, word choice or fluency preferences"
+        )
     )
-    corrected_text: str | None = Field(
-        default=None, description="Improved translation when not approved, otherwise null"
+    description: str = Field(description="The specific problem, quoting the words involved")
+
+
+class ReviewResult(BaseModel):
+    """Approval is computed, not chosen by the model: no major issue, no glossary violation."""
+
+    issues: list[ReviewIssue] = Field(
+        default_factory=list,
+        description="Real problems only; omit anything you consider acceptable",
     )
     glossary_violations: list[str] = Field(
         default_factory=list, description="Glossary terms translated inconsistently"
     )
+    corrected_text: str | None = Field(
+        default=None,
+        description="Full corrected translation ONLY if there is a major issue or a glossary "
+        "violation, with the same paragraphs; otherwise null",
+    )
+
+    @property
+    def major_issues(self) -> list[str]:
+        return [i.description for i in self.issues if i.severity == "major"]
+
+    @property
+    def approved(self) -> bool:
+        return not self.major_issues and not self.glossary_violations

@@ -71,7 +71,7 @@ def _format_glossary(glossary: list[GlossaryItem]) -> str:
     lines = []
     for entry in glossary:
         if entry.do_not_translate:
-            lines.append(f"- {entry.source_term} → [DO NOT TRANSLATE]")
+            lines.append(f"- {entry.source_term} → {entry.source_term} (keep exactly as written)")
         else:
             lines.append(f"- {entry.source_term} → {entry.target_term}")
     return "\n".join(lines)

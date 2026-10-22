@@ -83,7 +83,6 @@ class FakeChatModel(BaseChatModel):
             )
         if schema is ReviewResult:
             return ReviewResult(
-                approved=True,
                 issues=[],
                 corrected_text=None,
                 glossary_violations=[],

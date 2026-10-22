@@ -26,8 +26,11 @@ Check for:
 - Missing content or added content not in the original
 - Inconsistent terminology within the chunk
 
-Be strict about glossary adherence but lenient about stylistic choices.
-Only reject (approved=false) if there are actual errors, not style preferences.
+Classify every issue: "major" for real errors (meaning changed, content omitted or added,
+glossary not followed, text left untranslated, inline placeholders like <1>...</1> lost),
+"minor" for style or word-choice preferences. Never report something you consider
+acceptable or correct. A translation with only minor issues is accepted as it is.
+The text may end mid-sentence (it continues on the next page): that is not an issue.
 
 {style_instructions}""",
         ),
@@ -56,7 +59,7 @@ def _format_glossary(glossary: list[GlossaryItem]) -> str:
     lines = []
     for entry in glossary:
         if entry.do_not_translate:
-            lines.append(f"- {entry.source_term} → [MUST KEEP UNCHANGED]")
+            lines.append(f"- {entry.source_term} → {entry.source_term} (keep exactly as written)")
         else:
             lines.append(f"- {entry.source_term} → {entry.target_term}")
     return "\n".join(lines)

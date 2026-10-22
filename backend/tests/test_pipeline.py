@@ -1,5 +1,5 @@
 from app.agents.pipeline import TranslationPipeline
-from app.models.schemas import ReviewResult, TranslationResult
+from app.models.schemas import ReviewIssue, ReviewResult, TranslationResult
 from app.services.documents import open_document
 from tests.conftest import translate
 
@@ -30,7 +30,9 @@ async def test_failed_chunk_is_not_stored_as_translated(llm, sample_epub, monkey
 
 
 async def test_rejected_review_triggers_one_retry(llm, sample_epub):
-    llm.handlers[ReviewResult] = lambda text, n: ReviewResult(approved=n > 1, issues=["bad"])
+    llm.handlers[ReviewResult] = lambda text, n: ReviewResult(
+        issues=[ReviewIssue(severity="major", description="bad")] if n == 1 else []
+    )
     await translate(sample_epub, TranslationPipeline(llm=llm, max_retries=1))
     # First chunk is translated twice (rejected once), every other chunk once.
     assert len(llm.calls_for(TranslationResult)) == len(llm.calls_for(ReviewResult))
@@ -69,3 +71,34 @@ def test_keep_unfinished_drops_only_an_added_closing_quote():
     )
     assert keep_unfinished("“Done.”", "“Fatto.”") == "“Fatto.”"
     assert keep_unfinished(cut, "“Beh… perché uccidere") == "“Beh… perché uccidere"
+
+
+async def test_minor_issues_do_not_trigger_a_retranslation(llm, sample_epub):
+    llm.handlers[ReviewResult] = lambda text, n: ReviewResult(
+        issues=[ReviewIssue(severity="minor", description="'sbigottite' is a bit literal")],
+        corrected_text="not used",
+    )
+    await translate(sample_epub, TranslationPipeline(llm=llm))
+    assert len(llm.calls_for(TranslationResult)) == len(llm.calls_for(ReviewResult))
+    assert ReviewResult(issues=[ReviewIssue(severity="minor", description="x")]).approved
+    assert not ReviewResult(glossary_violations=["Mara"]).approved
+
+
+async def test_review_can_use_a_different_model(sample_epub):
+    from tests.conftest import ScriptedLLM
+
+    translator, reviewer = ScriptedLLM(), ScriptedLLM()
+    await translate(sample_epub, TranslationPipeline(llm=translator, review_llm=reviewer))
+    assert translator.calls_for(ReviewResult) == []
+    assert len(reviewer.calls_for(ReviewResult)) == len(translator.calls_for(TranslationResult))
+
+
+def test_do_not_translate_terms_are_shown_as_themselves():
+    from app.agents.translator_agent import _format_glossary
+    from app.models.schemas import GlossaryItem
+
+    text = _format_glossary(
+        [GlossaryItem(source_term="Kirito", target_term="Kirito", do_not_translate=True)]
+    )
+    assert text == "- Kirito → Kirito (keep exactly as written)"
+    assert "[" not in text  # no marker the model could copy into the translation

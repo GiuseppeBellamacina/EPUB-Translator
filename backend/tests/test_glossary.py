@@ -1,7 +1,7 @@
 from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationPipeline
 from app.core.fake_llm import _extract_source_text, meow_transform
-from app.models.schemas import GlossaryItem, ReviewResult, TranslationResult
+from app.models.schemas import GlossaryItem, ReviewIssue, ReviewResult, TranslationResult
 from tests.conftest import translate
 
 
@@ -61,12 +61,15 @@ async def test_terms_learned_in_one_chapter_reach_the_next(llm, sample_epub):
         e.data["new_terms"][0]["source_term"] for e in events if e.event_type == "glossary_update"
     ] == ["Mara"]
     later_prompts = [t for t in llm.calls_for(TranslationResult)[1:] if "Mara" in t.split("---")[1]]
-    assert later_prompts and all("- Mara → [DO NOT TRANSLATE]" in t for t in later_prompts)
+    assert later_prompts and all(
+        "- Mara → Mara (keep exactly as written)" in t for t in later_prompts
+    )
 
 
 async def test_rejection_feedback_reaches_the_retranslation(llm, sample_epub):
     llm.handlers[ReviewResult] = lambda text, n: ReviewResult(
-        approved=n > 1, issues=["Wrong tense"], glossary_violations=["Mara"]
+        issues=[ReviewIssue(severity="major", description="Wrong tense")] if n == 1 else [],
+        glossary_violations=["Mara"] if n == 1 else [],
     )
     pipeline = TranslationPipeline(llm=llm, max_retries=1)
     await translate(sample_epub, pipeline)
