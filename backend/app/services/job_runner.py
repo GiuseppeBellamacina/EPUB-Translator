@@ -14,6 +14,7 @@ import asyncio
 import copy
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -52,6 +53,7 @@ run_started: dict[int, tuple[float, int]] = {}
 _subscribers: dict[int, set[asyncio.Queue]] = {}
 _runner: asyncio.Task | None = None
 _halt = False
+_halted_at: datetime | None = None  # when the last stop happened
 
 # Bulky payloads persisted server-side but not sent to the client
 _SERVER_ONLY_KEYS = {"translated_html", "translations"}
@@ -119,7 +121,7 @@ async def enqueue(
                 book_id=book_id,
                 position=start + i,
                 config=config.model_dump(),
-                keep_glossary=keep_glossary,
+                keep_glossary=keep_glossary and i > 0,  # never from an earlier batch
                 status="pending",
             )
             for i, book_id in enumerate(book_ids)
@@ -143,14 +145,38 @@ def queue_running() -> bool:
 
 
 def stop(book_id: int | None = None) -> bool:
-    """Pause the running book (any, or ``book_id``) and halt the queue."""
-    global _halt
+    """Pause the running book (any, or ``book_id``) and halt the queue.
+
+    Books waiting at that moment become ``paused``: only ``resume`` runs them again,
+    not a later start of another book.
+    """
+    global _halt, _halted_at
     targets = [p for b, p in active_jobs.items() if book_id in (None, b)]
     if book_id is None or targets:
-        _halt = True
+        _halt, _halted_at = True, datetime.utcnow()
     for pipeline in targets:
         pipeline.cancel()
     return bool(targets)
+
+
+async def resume() -> None:
+    """Run the paused books again (in their order), then anything else waiting."""
+    async with async_session() as db:
+        await db.execute(
+            update(QueueItem).where(QueueItem.status == "paused").values(status="pending")
+        )
+        await db.commit()
+    kick()
+
+
+async def _pause_waiting(before: datetime) -> None:
+    async with async_session() as db:
+        await db.execute(
+            update(QueueItem)
+            .where(QueueItem.status == "pending", QueueItem.created_at <= before)
+            .values(status="paused")
+        )
+        await db.commit()
 
 
 async def shutdown() -> None:
@@ -164,10 +190,12 @@ async def shutdown() -> None:
 
 
 async def recover_queue() -> None:
-    """Startup: an item left running was interrupted; it waits for the queue to resume."""
+    """Startup: the interrupted queue (running and waiting books) waits for a resume."""
     async with async_session() as db:
         await db.execute(
-            update(QueueItem).where(QueueItem.status == "running").values(status="paused")
+            update(QueueItem)
+            .where(QueueItem.status.in_(("running", "pending")))
+            .values(status="paused")
         )
         await db.commit()
 
@@ -176,7 +204,7 @@ async def _next_item() -> QueueItem | None:
     async with async_session() as db:
         result = await db.execute(
             select(QueueItem)
-            .where(QueueItem.status.in_(("pending", "paused")))
+            .where(QueueItem.status == "pending")
             .order_by(QueueItem.position)
             .limit(1)
         )
@@ -219,7 +247,13 @@ async def _previous_book(item: QueueItem) -> int | None:
 
 
 async def _run_queue() -> None:
-    while not _halt and (item := await _next_item()):
+    global _halted_at
+    while True:
+        if _halted_at:  # a stop: the books waiting then are paused, newer starts still run
+            await _pause_waiting(_halted_at)
+            _halted_at = None
+        if _halt or not (item := await _next_item()):
+            break
         await _set_item(item.id, "running")  # item still holds the config read before
         carry_from = await _previous_book(item) if item.keep_glossary else None
         try:
@@ -282,6 +316,8 @@ async def run_job(book_id: int, config: RunConfig, carry_from: int | None = None
         review_llm=review_llm,
     )
     active_jobs[book_id] = pipeline
+    if _halt:  # paused while the book was starting
+        pipeline.cancel()
     recent_events[book_id] = deque(maxlen=200)
     store = JobStore(book_id)
     status, output_path, error = BookStatus.failed, None, None

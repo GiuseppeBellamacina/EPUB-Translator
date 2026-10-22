@@ -499,7 +499,8 @@ async def add_to_queue(data: QueueAdd):
 
 @router.post("/queue/start")
 async def start_queue():
-    job_runner.kick()
+    """Resume: paused books run again in their order."""
+    await job_runner.resume()
     return {"running": True}
 
 
