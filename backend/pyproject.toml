@@ -58,6 +58,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: calls a real LLM provider (costs money/quota); run with -m live"]
+
 [tool.isort]
 profile = "black"
 line_length = 100

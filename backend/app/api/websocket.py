@@ -162,6 +162,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
         try:
             translated_chapters: dict[int, dict] = {}
             output_path: str | None = None
+            completion_message: dict | None = None
             async for progress in EpubService.translate_book(
                 epub_book, pipeline, existing_glossary
             ):
@@ -181,17 +182,22 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                 client_data = progress.data
                 if progress.event_type == "chapter_saved":
                     client_data = {k: v for k, v in progress.data.items() if k != "translated_html"}
-                await websocket.send_json(
-                    {
-                        "event": progress.event_type,
-                        "chapter_index": progress.chapter_index,
-                        "total_chapters": progress.total_chapters,
-                        "chunk_index": progress.chunk_index,
-                        "total_chunks": progress.total_chunks,
-                        "message": progress.message,
-                        "data": client_data,
-                    }
-                )
+                message = {
+                    "event": progress.event_type,
+                    "chapter_index": progress.chapter_index,
+                    "total_chapters": progress.total_chapters,
+                    "chunk_index": progress.chunk_index,
+                    "total_chunks": progress.total_chunks,
+                    "message": progress.message,
+                    "data": client_data,
+                }
+                if progress.event_type == "job_complete":
+                    # Sent only after the DB is updated: a client closing on this event
+                    # must not be mistaken for a cancellation.
+                    listener_task.cancel()
+                    completion_message = message
+                else:
+                    await websocket.send_json(message)
 
             # Update book status on completion
             async with async_session() as db:
@@ -246,6 +252,9 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                 elif book:
                     book.status = BookStatus.failed
                     await db.commit()
+
+            if completion_message:
+                await websocket.send_json(completion_message)
 
         except Exception as e:
             await websocket.send_json({"event": "error", "message": str(e)})
