@@ -466,7 +466,9 @@ class PdfDocument(Document):
             if page_translations:
                 typeset(out[index], self.page_blocks(index), page_translations)
         path.parent.mkdir(parents=True, exist_ok=True)
-        out.save(path, garbage=3, deflate=True)
+        # every insert_htmlbox embeds whole font files: subset them and merge duplicates
+        out.subset_fonts()
+        out.save(path, garbage=4, deflate=True, use_objstms=1)
         out.close()
         return path
 
