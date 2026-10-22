@@ -22,7 +22,7 @@ CACHE_TTL = 600
 _cache: dict[tuple, tuple[float, list["ModelOption"]]] = {}
 
 # OpenAI's /models also returns embeddings, audio, image, moderation... models
-_OPENAI_CHAT_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
+_OPENAI_CHAT = re.compile(r"(gpt-|chatgpt-|o\d)")
 _OPENAI_NON_CHAT = (
     "embedding", "tts", "whisper", "dall-e", "image", "audio", "realtime", "transcribe",
     "moderation", "search", "computer-use", "deep-research", "codex", "instruct", "-pro",
@@ -76,7 +76,7 @@ async def _fetch(
             ids = [
                 i
                 for i in ids
-                if i.startswith(_OPENAI_CHAT_PREFIXES) and not any(x in i for x in _OPENAI_NON_CHAT)
+                if _OPENAI_CHAT.match(i) and not any(x in i for x in _OPENAI_NON_CHAT)
             ]
             return [ModelOption(i, i) for i in _without_dated_snapshots(ids)]
         case "anthropic":

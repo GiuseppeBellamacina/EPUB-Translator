@@ -21,8 +21,9 @@ from langchain_core.runnables import Runnable
 
 from app.core.config import settings
 
-# Reasoning models only accept the default temperature.
-_NO_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+# OpenAI reasoning models (gpt-5 and later, the o-series) only accept the default temperature;
+# by family, not a list of names, so new models (gpt-6-luna, o5) are covered.
+_OPENAI_REASONING = re.compile(r"(gpt-([5-9]|\d{2,})|o\d)(?!\d)")
 _CLAUDE_VERSION = re.compile(r"claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)")
 
 
@@ -36,7 +37,8 @@ def accepts_temperature(provider: str, model: str) -> bool:
     if provider == "anthropic":
         version = _claude_version(model)
         return version is None or version < (4, 7)
-    return not model.startswith(_NO_TEMPERATURE_PREFIXES)
+    # router names carry a vendor prefix: openai/gpt-6-luna
+    return not _OPENAI_REASONING.match(model.rsplit("/", 1)[-1].lower())
 
 
 def thinks_by_default(provider: str, model: str, supports_reasoning: bool) -> bool:
