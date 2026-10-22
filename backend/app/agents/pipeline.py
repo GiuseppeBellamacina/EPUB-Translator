@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.analyzer import analyze_context
 from app.agents.reviewer import review_translation
-from app.agents.translator_agent import translate_chunk
+from app.agents.translator_agent import split_paragraphs, translate_blocks
 from app.models.schemas import AnalysisResult, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker
 
@@ -102,14 +102,18 @@ class ChapterState(BaseModel):
     # Per-chunk working state
     chunk_index: int = 0
     retries: int = 0
-    current_translation: str = ""
+    current_blocks: list[str] = Field(default_factory=list)  # one translation per chunk block
     current_new_terms: list[GlossaryItem] = Field(default_factory=list)
     review_approved: bool = False
     should_retry: bool = False
     translation_failed: bool = False
 
-    # Output
+    # Output: one translation per block of the chapter, in block order
     translated_blocks: list[str] = Field(default_factory=list)
+
+    @property
+    def current_translation(self) -> str:
+        return "\n\n".join(self.current_blocks)
 
 
 def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
@@ -120,9 +124,9 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
         chunk = state.chunks[state.chunk_index]
         total = len(state.chunks)
         try:
-            result = await translate_chunk(
-                llm=llm,
-                text=chunk.text,
+            translations, new_terms = await translate_blocks(
+                llm,
+                [b.text for b in chunk.blocks],
                 context=chunk.context_text,
                 chapter_summary=state.chapter_summary,
                 glossary=state.glossary,
@@ -140,7 +144,7 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                 }
             )
             return {
-                "current_translation": chunk.text,
+                "current_blocks": [b.text for b in chunk.blocks],
                 "current_new_terms": [],
                 "translation_failed": True,
             }
@@ -151,12 +155,12 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                 "chunk_index": state.chunk_index,
                 "total_chunks": total,
                 "message": f"Chunk {state.chunk_index + 1}/{total} translated",
-                "data": {"translated_text": result.translated_text},
+                "data": {"translated_text": "\n\n".join(translations)},
             }
         )
         return {
-            "current_translation": result.translated_text,
-            "current_new_terms": result.new_terms,
+            "current_blocks": translations,
+            "current_new_terms": new_terms,
             "translation_failed": False,
         }
 
@@ -189,8 +193,12 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
             )
             return {"review_approved": True, "should_retry": False}
 
-        # Not approved: keep the corrected text (if any) as the current best.
-        corrected = review.corrected_text or state.current_translation
+        # Not approved: keep the corrected text as the current best, but only if it
+        # still has one paragraph per block (otherwise it would break alignment).
+        corrected_blocks = split_paragraphs(review.corrected_text or "")
+        if len(corrected_blocks) != len(state.current_blocks):
+            corrected_blocks = state.current_blocks
+        corrected = "\n\n".join(corrected_blocks)
         should_retry = state.retries < state.max_retries
         if should_retry:
             writer(
@@ -213,7 +221,7 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
             )
         updates: dict[str, Any] = {
             "review_approved": False,
-            "current_translation": corrected,
+            "current_blocks": corrected_blocks,
             "should_retry": should_retry,
         }
         if should_retry:
@@ -235,7 +243,7 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
             )
         return {
             "translated_blocks": state.translated_blocks
-            + [_enforce_glossary(state.current_translation, glossary)],
+            + [_enforce_glossary(t, glossary) for t in state.current_blocks],
             "glossary": glossary,
             "chunk_index": state.chunk_index + 1,
             "retries": 0,
