@@ -101,6 +101,8 @@ export interface Provider {
   default_model: string | null;
   params: Record<string, unknown> | null;
   is_active: boolean;
+  /** "config" = managed by config.yaml, "user" = created in the UI */
+  source: "config" | "user";
 }
 
 export interface ProviderCreate {

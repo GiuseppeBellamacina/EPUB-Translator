@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # --- Provider ---
 
@@ -10,6 +10,17 @@ from pydantic import BaseModel
 class ProviderCreate(BaseModel):
     name: str
     provider_type: str  # openai, anthropic, ollama, custom
+    api_key: str | None = None
+    base_url: str | None = None
+    default_model: str | None = None
+    params: dict | None = None
+
+
+class ProviderUpdate(BaseModel):
+    """Fields left out are unchanged; ``api_key`` None keeps the stored key, "" clears it."""
+
+    name: str | None = None
+    provider_type: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     default_model: str | None = None
@@ -30,6 +41,12 @@ class ProviderResponse(BaseModel):
     default_model: str | None
     params: dict | None
     is_active: bool
+    source: str = "user"  # 'config' = managed by config.yaml
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _legacy_source(cls, value):
+        return value or "user"
 
     class Config:
         from_attributes = True

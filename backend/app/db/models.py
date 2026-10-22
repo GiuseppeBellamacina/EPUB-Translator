@@ -117,4 +117,6 @@ class ProviderConfig(Base):
     default_model = Column(String(100), nullable=True)
     params = Column(JSON, nullable=True)  # temperature, max_tokens, top_p, etc.
     is_active = Column(Boolean, default=True)
+    # 'config' = managed by config.yaml bootstrap, 'user' = created in the UI (NULL: legacy row)
+    source = Column(String(20), nullable=True, default="user")
     created_at = Column(DateTime, default=datetime.utcnow)

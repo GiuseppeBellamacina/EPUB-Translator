@@ -83,15 +83,23 @@ def resolve_providers(config: dict[str, Any], keys: dict[str, str]) -> list[dict
 
 
 async def bootstrap_providers(db: AsyncSession) -> list[str]:
-    """Upsert providers by name. Returns the names configured."""
-    specs = resolve_providers(load_config(), load_keys())
-    for spec in specs:
+    """Upsert providers by name. Returns the names configured.
+
+    Rows created in the UI (source 'user') are never taken over by config.yaml.
+    """
+    names = []
+    for spec in resolve_providers(load_config(), load_keys()):
         result = await db.execute(select(ProviderConfig).where(ProviderConfig.name == spec["name"]))
         provider = result.scalar_one_or_none()
         if provider is None:
             provider = ProviderConfig(name=spec["name"])
             db.add(provider)
+        elif provider.source == "user":
+            logger.warning("Provider %r was created in the UI: config.yaml skipped", spec["name"])
+            continue
 
+        names.append(spec["name"])
+        provider.source = "config"
         provider.provider_type = spec["type"]
         provider.base_url = spec.get("base_url")
         provider.default_model = spec.get("default_model")
@@ -104,7 +112,6 @@ async def bootstrap_providers(db: AsyncSession) -> list[str]:
             provider.api_key_encrypted = encrypt_api_key(api_key) if api_key else None
 
     await db.commit()
-    names = [s["name"] for s in specs]
     if names:
         logger.info("Bootstrapped providers: %s", ", ".join(names))
     return names
