@@ -1,23 +1,21 @@
 """
-Smart Chunker — Hybrid paragraph + sliding window chunking for EPUB HTML.
+Smart Chunker — Hybrid paragraph + sliding window chunking.
 
 Strategy:
-1. Parse HTML into structural blocks (paragraphs, headings, divs)
+1. Take the document's translatable blocks (``html_processor.extract_html_blocks``
+   for EPUB; the PDF adapter builds them from page text blocks)
 2. Merge small blocks until reaching token target (~500-800 tokens per chunk)
 3. Add overlap context from previous chunk (marked as context, not to translate)
-4. Respect boundaries: never split mid-sentence or mid-tag
+4. Never split a block: one block = one paragraph of the chunk text
 5. Headings always start a new chunk
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import tiktoken
-from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
-HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-BLOCK_TAGS = {"p", "div", "blockquote", "li", "td", "th", "figcaption", "dt", "dd"}
-SKIP_TAGS = {"script", "style", "meta", "link", "noscript"}
-STRUCTURAL_TAGS = HEADING_TAGS | BLOCK_TAGS
+from app.services.html_processor import extract_html_blocks, parse_html
 
 # Approximate tokens per character ratio for English text
 CHARS_PER_TOKEN = 4
@@ -25,14 +23,13 @@ CHARS_PER_TOKEN = 4
 
 @dataclass
 class TextBlock:
-    """A structural block of text extracted from HTML."""
+    """A translatable block (one paragraph of a chunk's text)."""
 
     tag_name: str
     text: str
-    html: str
-    element: Tag | None = None
     is_heading: bool = False
     token_count: int = 0
+    meta: dict[str, Any] = field(default_factory=dict)  # format-specific data (e.g. PDF bbox)
 
 
 @dataclass
@@ -91,62 +88,18 @@ class SmartChunker:
         return max(1, len(text) // CHARS_PER_TOKEN)
 
     def extract_blocks(self, html_content: str | bytes) -> list[TextBlock]:
-        """Extract structural text blocks from HTML content."""
-        if isinstance(html_content, bytes):
-            html_content = html_content.decode("utf-8", errors="replace")
+        """Translatable blocks of an HTML document, aligned with ``replace_text_blocks``."""
+        soup, _, _ = parse_html(html_content)
+        return [self.make_block(b.tag_name, b.text) for b in extract_html_blocks(soup)]
 
-        soup = BeautifulSoup(html_content, "html.parser")
-        blocks: list[TextBlock] = []
-
-        # Find body, or use whole document
-        body = soup.find("body") or soup
-
-        self._extract_from_element(body, blocks)
-        return blocks
-
-    def _extract_from_element(self, element: Tag, blocks: list[TextBlock]):
-        """Recursively extract text blocks from an element."""
-        for child in element.children:
-            if isinstance(child, Comment):
-                continue
-            if isinstance(child, NavigableString):
-                text = child.strip()
-                if text:
-                    blocks.append(
-                        TextBlock(
-                            tag_name="text",
-                            text=text,
-                            html=str(child),
-                            element=None,
-                            is_heading=False,
-                            token_count=self.count_tokens(text),
-                        )
-                    )
-                continue
-            if not isinstance(child, Tag):
-                continue
-
-            tag_name = child.name.lower() if child.name else ""
-
-            if tag_name in SKIP_TAGS:
-                continue
-
-            if tag_name in STRUCTURAL_TAGS:
-                text = child.get_text(separator=" ", strip=True)
-                if text:
-                    blocks.append(
-                        TextBlock(
-                            tag_name=tag_name,
-                            text=text,
-                            html=str(child),
-                            element=child,
-                            is_heading=tag_name in HEADING_TAGS,
-                            token_count=self.count_tokens(text),
-                        )
-                    )
-            else:
-                # Recurse into non-block elements (span, a, em, etc. at top level)
-                self._extract_from_element(child, blocks)
+    def make_block(self, tag_name: str, text: str, **meta: Any) -> TextBlock:
+        return TextBlock(
+            tag_name=tag_name,
+            text=text,
+            is_heading=tag_name in {"h1", "h2", "h3", "h4", "h5", "h6"},
+            token_count=self.count_tokens(text),
+            meta=meta,
+        )
 
     def create_chunks(self, blocks: list[TextBlock]) -> list[Chunk]:
         """

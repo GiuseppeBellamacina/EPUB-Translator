@@ -1,148 +1,225 @@
 """
-HTML Processor — Handles HTML manipulation for EPUB translation.
-Fixes spacing issues in reconstructed HTML output.
+HTML Processor — block extraction and reconstruction for EPUB translation.
+
+Extraction and reconstruction share ``extract_html_blocks`` so block indexes are
+identical on both sides: translation ``i`` always lands on block ``i``.
+
+A block is either a leaf structural element (``<p>``, ``<h1>``, ``<li>``... with no
+nested structural element carrying text) or a *run* of consecutive inline nodes
+(bare text, ``<span>``, ``<em>``...) inside a container that also holds blocks.
+
+Inline markup is sent to the model as numbered placeholders — ``<1>bold</1>``,
+``<2/>`` for void/empty tags — and the original tags (with their attributes) are
+restored from the translation. Unbalanced placeholders fall back to plain text.
 """
 
+import copy
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 # Tags whose content should never be modified
-SKIP_TAGS = {"script", "style", "meta", "link", "noscript"}
+SKIP_TAGS = {"script", "style", "meta", "link", "noscript", "pre"}
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+BLOCK_TAGS = {"p", "div", "blockquote", "li", "td", "th", "figcaption", "dt", "dd"}
+STRUCTURAL_TAGS = HEADING_TAGS | BLOCK_TAGS
+
+_PLACEHOLDER = re.compile(r"<(/?)(\d+)(/?)>")
 
 
-def extract_visible_text(html_content: str | bytes) -> str:
-    """Extract all visible text from HTML for analysis purposes."""
+@dataclass
+class HtmlBlock:
+    """A translatable unit of an HTML document."""
+
+    text: str  # visible text with inline placeholders
+    nodes: list  # DOM nodes the block replaces (one Tag, or a run of inline nodes)
+    tags: dict[int, Tag] = field(default_factory=dict)  # placeholder id -> original tag
+    tag_name: str = "text"
+
+    @property
+    def is_heading(self) -> bool:
+        return self.tag_name in HEADING_TAGS
+
+
+def parse_html(html_content: str | bytes) -> tuple[BeautifulSoup, str, str]:
+    """Parse HTML, splitting off the XML declaration and DOCTYPE (re-added on output)."""
     if isinstance(html_content, bytes):
         html_content = html_content.decode("utf-8", errors="replace")
 
-    soup = BeautifulSoup(html_content, "html.parser")
-
-    # Remove script/style/meta
-    for tag in soup.find_all(SKIP_TAGS):
-        tag.decompose()
-
-    return soup.get_text(separator="\n", strip=True)
-
-
-def replace_text_blocks(html_content: str | bytes, translated_blocks: list[str]) -> bytes:
-    """
-    Replace text content in HTML with translated blocks while preserving structure.
-
-    This function maps translated text blocks back to their original positions
-    in the HTML, maintaining all tags, attributes, and structure.
-
-    Args:
-        html_content: Original HTML
-        translated_blocks: List of translated text blocks (from pipeline)
-
-    Returns:
-        Reconstructed HTML as bytes with translated content
-    """
-    if isinstance(html_content, bytes):
-        html_content = html_content.decode("utf-8", errors="replace")
-
-    # Preserve XML declaration and DOCTYPE
     xml_declaration = ""
     doctype = ""
-
-    xml_match = re.match(r"(<\?xml[^?]*\?>)\s*", html_content)
+    xml_match = re.match(r"\s*(<\?xml[^?]*\?>)\s*", html_content)
     if xml_match:
         xml_declaration = xml_match.group(1)
         html_content = html_content[xml_match.end() :]
-
     doctype_match = re.match(r"(<!DOCTYPE[^>]*>)\s*", html_content, re.IGNORECASE)
     if doctype_match:
         doctype = doctype_match.group(1)
         html_content = html_content[doctype_match.end() :]
 
-    soup = BeautifulSoup(html_content, "html.parser")
-    body = soup.find("body") or soup
-
-    # Collect all text-bearing block elements in order
-    block_elements = _collect_block_elements(body)
-
-    # Map translated blocks back to elements
-    # Each translated block corresponds to one or more paragraphs from chunker
-    if translated_blocks:
-        _apply_translations(block_elements, translated_blocks)
-
-    # Reconstruct output with spacing fix
-    output = _reconstruct_html(soup, xml_declaration, doctype)
-    return output.encode("utf-8")
+    return BeautifulSoup(html_content, "html.parser"), xml_declaration, doctype
 
 
-def _collect_block_elements(element: Tag) -> list[Tag]:
-    """Collect all block-level elements that contain visible text."""
-    block_tags = {
-        "p",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "div",
-        "blockquote",
-        "li",
-        "td",
-        "th",
-        "figcaption",
-        "dt",
-        "dd",
-    }
+def extract_visible_text(html_content: str | bytes) -> str:
+    """Extract all visible text from HTML for analysis purposes."""
+    soup, _, _ = parse_html(html_content)
+    for tag in soup.find_all(SKIP_TAGS):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
 
-    blocks = []
-    for el in element.descendants:
-        if isinstance(el, Tag) and el.name in block_tags:
-            text = el.get_text(strip=True)
-            if text:
-                # Only include if it's a leaf block (no nested blocks with text)
-                nested_blocks = el.find_all(block_tags)
-                nested_with_text = [b for b in nested_blocks if b.get_text(strip=True)]
-                if not nested_with_text:
-                    blocks.append(el)
+
+# --- Extraction ---------------------------------------------------------------
+
+
+def _has_text(node) -> bool:
+    if type(node) is NavigableString:
+        return bool(node.strip())
+    return isinstance(node, Tag) and node.name not in SKIP_TAGS and bool(node.get_text(strip=True))
+
+
+def _is_container(tag: Tag) -> bool:
+    """A tag holding structural descendants with text: recurse instead of taking it whole."""
+    return any(_has_text(d) for d in tag.find_all(STRUCTURAL_TAGS))
+
+
+def _is_translatable(text: str) -> bool:
+    return any(c.isalpha() for c in _PLACEHOLDER.sub("", text))
+
+
+def extract_html_blocks(soup: BeautifulSoup) -> list[HtmlBlock]:
+    """Translatable blocks of a parsed document, in document order."""
+    blocks: list[HtmlBlock] = []
+    _walk(soup.find("body") or soup, blocks)
     return blocks
 
 
-def _apply_translations(block_elements: list[Tag], translated_blocks: list[str]):
-    """
-    Apply translated text blocks to HTML elements.
+def _walk(container: Tag, blocks: list[HtmlBlock]) -> None:
+    run: list = []
 
-    The translated_blocks come from the chunker pipeline where multiple paragraphs
-    may be merged into one chunk. We split them back by paragraph breaks.
-    """
-    # Flatten all translated text split by double newlines
-    translated_paragraphs = []
-    for block in translated_blocks:
-        paragraphs = [p.strip() for p in block.split("\n\n") if p.strip()]
-        translated_paragraphs.extend(paragraphs)
+    def flush() -> None:
+        if run:
+            _add_block(blocks, list(run), "text")
+            run.clear()
 
-    # Apply to elements (best-effort mapping)
-    for i, element in enumerate(block_elements):
-        if i < len(translated_paragraphs):
-            _replace_element_text(element, translated_paragraphs[i])
+    for child in list(container.children):
+        if isinstance(child, Tag):
+            if child.name in SKIP_TAGS:
+                flush()
+            elif child.name in STRUCTURAL_TAGS or _is_container(child):
+                flush()
+                if _is_container(child):
+                    _walk(child, blocks)
+                else:
+                    _add_block(blocks, [child], child.name)
+            else:
+                run.append(child)
+        elif type(child) is NavigableString:
+            run.append(child)
+        # Comments, doctypes, processing instructions are left alone
+    flush()
 
 
-def _replace_element_text(element: Tag, new_text: str):
-    """Replace all text content in an element while preserving inline tags structure."""
-    # If the element has no children tags (only text), simple replacement
-    children_tags = [c for c in element.children if isinstance(c, Tag)]
+def _add_block(blocks: list[HtmlBlock], nodes: list, tag_name: str) -> None:
+    content = nodes[0].contents if tag_name != "text" else nodes
+    text, tags = encode_inline(content)
+    if _is_translatable(text):
+        blocks.append(HtmlBlock(text=text, nodes=nodes, tags=tags, tag_name=tag_name))
 
-    if not children_tags:
+
+def encode_inline(nodes: list) -> tuple[str, dict[int, Tag]]:
+    """Serialize inline content as text with numbered placeholders for tags."""
+    parts: list[str] = []
+    tags: dict[int, Tag] = {}
+
+    def walk(node) -> None:
+        if type(node) is NavigableString:
+            parts.append(str(node))
+        elif isinstance(node, Tag):
+            n = len(tags) + 1
+            tags[n] = node
+            if node.name in SKIP_TAGS or not node.get_text(strip=True):
+                parts.append(f"<{n}/>")
+            else:
+                parts.append(f"<{n}>")
+                for child in node.children:
+                    walk(child)
+                parts.append(f"</{n}>")
+
+    for node in nodes:
+        walk(node)
+    return re.sub(r"\s+", " ", "".join(parts)).strip(), tags
+
+
+# --- Reconstruction -----------------------------------------------------------
+
+
+def _shell(tag: Tag) -> Tag:
+    shell = copy.copy(tag)
+    shell.clear()
+    return shell
+
+
+def restore_inline(text: str, tags: dict[int, Tag]) -> list | None:
+    """Rebuild DOM nodes from placeholder text. None if placeholders are unbalanced."""
+    root = Tag(name="root")
+    stack: list[tuple[int | None, Tag]] = [(None, root)]
+    pos = 0
+    for match in _PLACEHOLDER.finditer(text):
+        if match.start() > pos:
+            stack[-1][1].append(NavigableString(text[pos : match.start()]))
+        pos = match.end()
+        closing, n, self_closing = match.group(1), int(match.group(2)), match.group(3)
+        if n not in tags:
+            continue  # invented placeholder: drop it
+        if self_closing:
+            stack[-1][1].append(copy.copy(tags[n]))
+        elif not closing:
+            element = _shell(tags[n])
+            stack[-1][1].append(element)
+            stack.append((n, element))
+        elif stack[-1][0] == n:
+            stack.pop()
+        else:
+            return None
+    if pos < len(text):
+        stack[-1][1].append(NavigableString(text[pos:]))
+    if len(stack) != 1:
+        return None
+    return list(root.contents)
+
+
+def _apply(block: HtmlBlock, translation: str) -> None:
+    nodes = restore_inline(translation, block.tags)
+    if nodes is None:
+        nodes = [NavigableString(_PLACEHOLDER.sub("", translation))]
+
+    if block.tag_name != "text":
+        element = block.nodes[0]
         element.clear()
-        element.append(NavigableString(new_text))
-    else:
-        # Has inline formatting — replace text in first text node
-        # and clear subsequent text nodes
-        text_nodes = [c for c in element.children if isinstance(c, NavigableString) and c.strip()]
-        if text_nodes:
-            text_nodes[0].replace_with(NavigableString(new_text))
-            for node in text_nodes[1:]:
-                node.extract()
-            # Remove inline children since we replaced all text
-            for child in children_tags:
-                child.extract()
+        for node in nodes:
+            element.append(node)
+        return
+
+    first = block.nodes[0]
+    for node in nodes:
+        first.insert_before(node)
+    for node in block.nodes:
+        node.extract()
+
+
+def replace_text_blocks(html_content: str | bytes, translations: Sequence[str | None]) -> bytes:
+    """Write per-block translations back into the HTML, preserving structure.
+
+    ``translations[i]`` replaces block ``i`` of ``extract_html_blocks``; ``None``
+    (or a missing entry) leaves that block untouched.
+    """
+    soup, xml_declaration, doctype = parse_html(html_content)
+    for block, translation in zip(extract_html_blocks(soup), translations):
+        if translation is not None:
+            _apply(block, translation)
+    return _reconstruct_html(soup, xml_declaration, doctype).encode("utf-8")
 
 
 def _reconstruct_html(soup: BeautifulSoup, xml_declaration: str, doctype: str) -> str:

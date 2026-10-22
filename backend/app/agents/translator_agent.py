@@ -2,6 +2,8 @@
 Translator Agent — Translates text chunks with glossary awareness and context.
 """
 
+import re
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -21,10 +23,13 @@ TRANSLATION_PROMPT = ChatPromptTemplate.from_messages(
 CRITICAL RULES:
 1. Follow the glossary strictly — use the exact translations specified
 2. Do NOT translate terms marked as "do not translate"
-3. Preserve paragraph breaks and text structure exactly
-4. If you encounter new important terms not in the glossary, note them
-5. Maintain the same level of formality as the original
-6. Do not add explanations or notes in the translation itself
+3. Preserve paragraph breaks exactly: output the same number of paragraphs, in the same order, \
+separated by a blank line — never merge or split paragraphs
+4. Inline markup appears as numbered placeholders like <1>...</1> or <2/>: keep every \
+placeholder, wrapped around the translation of the same words; never translate, renumber or drop them
+5. If you encounter new important terms not in the glossary, note them
+6. Maintain the same level of formality as the original
+7. Do not add explanations or notes in the translation itself
 
 {style_instructions}""",
         ),
@@ -39,6 +44,8 @@ PREVIOUS CONTEXT (for continuity, do NOT translate this):
 {context}
 
 ---
+
+The text has exactly {paragraph_count} paragraph(s); return exactly {paragraph_count}.
 
 TRANSLATE the following from {source_language} to {target_language}:
 
@@ -103,6 +110,7 @@ async def translate_chunk(
     result = await chain.ainvoke(
         {
             "text": text,
+            "paragraph_count": len(split_paragraphs(text)),
             "context": context or "(Start of chapter)",
             "chapter_summary": chapter_summary or "No summary available",
             "glossary": _format_glossary(glossary),
@@ -113,3 +121,35 @@ async def translate_chunk(
     )
 
     return result
+
+
+def split_paragraphs(text: str) -> list[str]:
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+
+
+async def translate_blocks(
+    llm: BaseChatModel, blocks: list[str], attempts: int = 2, **kwargs
+) -> tuple[list[str], list[GlossaryItem]]:
+    """Translate blocks as one chunk, guaranteeing one translation per block.
+
+    The chunk is retried when the model merges/splits paragraphs; if it still
+    does, each block is translated on its own so alignment can never drift.
+    ``kwargs`` are passed through to ``translate_chunk``.
+    """
+    if len(blocks) == 1:
+        result = await translate_chunk(llm=llm, text=blocks[0], **kwargs)
+        return [" ".join(split_paragraphs(result.translated_text))], result.new_terms
+
+    for _ in range(attempts):
+        result = await translate_chunk(llm=llm, text="\n\n".join(blocks), **kwargs)
+        paragraphs = split_paragraphs(result.translated_text)
+        if len(paragraphs) == len(blocks):
+            return paragraphs, result.new_terms
+
+    translations: list[str] = []
+    new_terms: list[GlossaryItem] = []
+    for block in blocks:
+        single, terms = await translate_blocks(llm, [block], **kwargs)
+        translations += single
+        new_terms += terms
+    return translations, new_terms
