@@ -12,9 +12,10 @@ import {
 import { liveChunks } from "../lib/jobEvents";
 import { settingsFrom, type RunSettings } from "../lib/runSettings";
 import { buttonClass } from "../lib/styles";
+import { useRunCost } from "../hooks/useRunCost";
 import { useTranslationWs } from "../hooks/useTranslationWs";
 import { ActivityLog } from "../components/ActivityLog";
-import { ModelCost } from "../components/CostEstimate";
+import { CostValue } from "../components/CostEstimate";
 import { GlossaryEditor } from "../components/GlossaryEditor";
 import { LiveView } from "../components/LiveView";
 import { ProgressPanel } from "../components/ProgressPanel";
@@ -30,7 +31,6 @@ export function TranslatePage() {
   const [progress, setProgress] = useState<BookProgress | null>(null);
   const [settings, setSettings] = useState<RunSettings>(() => settingsFrom(null, []));
   const [glossaryOpen, setGlossaryOpen] = useState(false);
-  const [totalCost, setTotalCost] = useState<{ with: number; without: number } | null>(null);
   const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style } = settings;
 
   const refresh = useCallback(() => {
@@ -79,21 +79,7 @@ export function TranslatePage() {
     }
   }, [latest, id]);
 
-  useEffect(() => {
-    if (providerId === null || !model) return;
-    let current = true;
-    api
-      .getEstimate(id, { providerId, model })
-      .then((e) => {
-        const row = e.models[0];
-        if (current) setTotalCost(row ? { with: row.with_review.cost, without: row.without_review.cost } : null);
-      })
-      .catch(() => current && setTotalCost(null));
-    return () => {
-      current = false;
-    };
-  }, [id, providerId, model]);
-
+  const totalCost = useRunCost(id, providerId, model, enableReview, reviewModel);
   const chunks = useMemo(() => liveChunks(events), [events]);
 
   if (!book) {
@@ -110,10 +96,9 @@ export function TranslatePage() {
   const done = progress?.completed_units ?? book.translated_chapters;
   const isCompleted = book.status === "completed";
   const canResume = !isCompleted && done > 0;
-  const total = totalCost && (enableReview ? totalCost.with : totalCost.without);
   const spent =
-    total !== null && total !== undefined && book.total_chapters
-      ? `$${((total * done) / book.total_chapters).toFixed(2)}`
+    typeof totalCost === "number" && book.total_chapters
+      ? `$${((totalCost * done) / book.total_chapters).toFixed(2)}`
       : null;
 
   const start = (restart = false) => {
@@ -200,7 +185,7 @@ export function TranslatePage() {
             <div className="flex items-center justify-between border-t border-line pt-3.5">
               <span className="text-muted">Estimated total</span>
               <span className="font-serif text-xl">
-                <ModelCost bookId={id} providerId={providerId} model={model} withReview={enableReview} reviewModel={reviewModel} />
+                <CostValue cost={totalCost} />
               </span>
             </div>
           )}

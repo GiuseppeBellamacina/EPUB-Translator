@@ -155,58 +155,9 @@ export function CostEstimate({ bookId }: { bookId: number }) {
   );
 }
 
-type EstimateRow = Estimate["models"][number];
-
-/** Estimate row of one provider model; undefined while loading, null if the price is unknown. */
-function useModelEstimate(bookId: number, providerId: number, model: string) {
-  const [result, setResult] = useState<{ key: string; row: EstimateRow | null } | null>(null);
-  const key = `${providerId}/${model}`;
-
-  useEffect(() => {
-    if (!model) return;
-    let current = true;
-    const timer = setTimeout(() => {
-      api
-        .getEstimate(bookId, { providerId, model })
-        .then((estimate) => current && setResult({ key, row: estimate.models[0] ?? null }))
-        .catch(() => current && setResult({ key, row: null }));
-    }, 300); // typed model ids: wait for a pause
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-  }, [bookId, providerId, model, key]);
-
-  return result?.key === key ? result.row : undefined;
-}
-
-/** Estimated cost of translating a book with the selected provider model (and reviewer model). */
-export function ModelCost({
-  bookId,
-  providerId,
-  model,
-  withReview,
-  reviewModel,
-}: {
-  bookId: number;
-  providerId: number;
-  model: string;
-  withReview?: boolean;
-  reviewModel?: string;
-}) {
-  const reviewer = withReview !== false && reviewModel && reviewModel !== model ? reviewModel : "";
-  const row = useModelEstimate(bookId, providerId, model);
-  const reviewRow = useModelEstimate(bookId, providerId, reviewer);
-
-  if (!model || row === undefined || (reviewer && reviewRow === undefined)) {
-    return <span className="text-faint">…</span>;
-  }
-  if (!row || (reviewer && !reviewRow)) return <span className="text-faint">n/a</span>;
-  if (withReview === false) return <span>{formatCost(row.without_review.cost)}</span>;
-  // shortcut: retranslations of rejected chunks are priced at the reviewer's rate; the
-  // backend would need a split translator/reviewer usage to be exact.
-  const cost = reviewRow
-    ? row.without_review.cost + reviewRow.with_review.cost - reviewRow.without_review.cost
-    : row.with_review.cost;
+/** A cost from useRunCost: "…" while loading, "n/a" when a price is unknown. */
+export function CostValue({ cost }: { cost: number | null | undefined }) {
+  if (cost === undefined) return <span className="text-faint">…</span>;
+  if (cost === null) return <span className="text-faint">n/a</span>;
   return <span>{formatCost(cost)}</span>;
 }
