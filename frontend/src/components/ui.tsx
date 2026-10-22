@@ -44,6 +44,7 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 
 const statusStyles: Record<string, string> = {
   uploaded: "bg-tint text-muted",
+  queued: "bg-tint text-ink",
   translating: "bg-accent-soft text-accent",
   paused: "bg-warn-soft text-warn",
   completed: "bg-accent-soft text-accent",
