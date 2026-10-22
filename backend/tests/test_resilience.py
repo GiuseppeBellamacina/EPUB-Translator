@@ -78,6 +78,19 @@ def test_claude_sampling_and_thinking_rules(model, temperature, thinks):
     assert thinks_by_default("anthropic", model, supports_reasoning=True) is thinks
 
 
+def test_every_call_has_an_output_cap_and_a_timeout():
+    nano = create_llm(LLMConfig(provider="openai", model="gpt-4.1-nano", api_key="x"))
+    assert nano.max_tokens == 4096 and nano.request_timeout == 120
+    reasoning = create_llm(LLMConfig(provider="openai", model="gpt-5-nano", api_key="x"))
+    assert reasoning.max_tokens == 16384
+    claude = create_llm(LLMConfig(provider="anthropic", model="claude-haiku-5-5", api_key="x"))
+    assert claude.max_tokens == 16384 and claude.default_request_timeout == 120
+    explicit = create_llm(
+        LLMConfig(provider="custom", model="m", base_url="https://x/v1", max_tokens=100)
+    )
+    assert explicit.max_tokens == 100
+
+
 def test_reasoning_models_get_no_temperature():
     assert (
         create_llm(LLMConfig(provider="openai", model="gpt-5-nano", api_key="x")).temperature
