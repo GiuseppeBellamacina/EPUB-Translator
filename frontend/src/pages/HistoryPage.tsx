@@ -8,6 +8,7 @@ const statusColors: Record<string, string> = {
   uploaded: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
   analyzing: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
   translating: "bg-gray-900 text-white dark:bg-white dark:text-gray-900",
+  paused: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
   completed:
     "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600",
   failed: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400",
@@ -17,6 +18,7 @@ const statusLabels: Record<string, string> = {
   uploaded: "uploaded",
   analyzing: "analyzing",
   translating: "translating",
+  paused: "paused",
   completed: "completed",
   failed: "failed",
 };
@@ -113,7 +115,7 @@ export function HistoryPage() {
                       </a>
                     </>
                   )}
-                  {(book.status === "uploaded" || book.status === "failed") && (
+                  {["uploaded", "paused", "failed"].includes(book.status) && (
                     <button
                       onClick={() => navigate(`/translate/${book.id}`)}
                       className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"

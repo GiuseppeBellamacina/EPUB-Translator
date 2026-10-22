@@ -1,296 +1,193 @@
-"""WebSocket endpoint for real-time translation progress."""
+"""WebSocket endpoint for real-time translation progress.
+
+Protocol:
+    client → {"action": "start", "provider_id": 1, "source_language": "english",
+              "target_language": "italian", "model": "...", "restart": false, ...}
+    client → {"action": "stop"}                       (pauses; resumable)
+    server → {"event": ..., "chapter_index": ..., "message": ..., "data": {...}}
+
+A job resumes from its checkpoints by default; ``restart: true`` starts over.
+Stop and disconnect pause the job, errors mark it failed — both are resumable.
+"""
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
 
-from app.agents.pipeline import TranslationPipeline
+from app.agents.pipeline import TranslationPipeline, TranslationProgress
 from app.core.config import settings
 from app.core.encryption import decrypt_api_key
 from app.core.llm_factory import LLMConfig, create_llm
 from app.db.database import async_session
-from app.db.models import (
-    Book,
-    BookStatus,
-    Chapter,
-    GlossaryEntry,
-    ProviderConfig,
-    TranslationJob,
-)
-from app.models.schemas import GlossaryItem
+from app.db.models import Book, BookStatus, ProviderConfig
 from app.services.chunker import SmartChunker
-from app.services.epub_service import EpubService
+from app.services.documents import open_document
+from app.services.job_store import JobStore
+from app.services.translation_service import translate_document
 
 ws_router = APIRouter()
 
 # Track active translation jobs for cancellation
 active_jobs: dict[int, TranslationPipeline] = {}
 
+# Bulky payloads persisted server-side but not sent to the client
+_SERVER_ONLY_KEYS = {"translated_html", "translations"}
+
+
+def _client_message(event: TranslationProgress) -> dict:
+    return {
+        "event": event.event_type,
+        "chapter_index": event.chapter_index,
+        "total_chapters": event.total_chapters,
+        "chunk_index": event.chunk_index,
+        "total_chunks": event.total_chunks,
+        "message": event.message,
+        "data": {k: v for k, v in event.data.items() if k not in _SERVER_ONLY_KEYS},
+    }
+
+
+async def _fail(websocket: WebSocket, message: str) -> None:
+    await websocket.send_json({"event": "error", "error": message, "message": message})
+    await websocket.close()
+
 
 @ws_router.websocket("/ws/translate/{book_id}")
 async def translate_ws(websocket: WebSocket, book_id: int):
-    """
-    WebSocket endpoint for real-time translation with progress updates.
-
-    Client sends: {"action": "start", "provider_id": 1, "source_language": "english",
-                   "target_language": "italian", "model": "gpt-4o-mini"}
-    Server sends: progress events as JSON
-    """
     await websocket.accept()
-
     try:
-        # Wait for start command
         data = await websocket.receive_json()
+    except WebSocketDisconnect:
+        return
 
-        if data.get("action") != "start":
-            await websocket.send_json({"error": "Expected 'start' action"})
-            await websocket.close()
-            return
+    if data.get("action") != "start":
+        return await _fail(websocket, "Expected 'start' action")
+    if book_id in active_jobs:
+        return await _fail(websocket, "A translation is already running for this book")
 
-        # Get provider config
-        async with async_session() as db:
-            provider_result = await db.execute(
-                select(ProviderConfig).where(ProviderConfig.id == data["provider_id"])
-            )
-            provider = provider_result.scalar_one_or_none()
-            if not provider:
-                await websocket.send_json({"error": "Provider not found"})
-                await websocket.close()
-                return
+    async with async_session() as db:
+        provider = await db.get(ProviderConfig, data.get("provider_id"))
+        book = await db.get(Book, book_id)
+    if not provider:
+        return await _fail(websocket, "Provider not found")
+    if not book:
+        return await _fail(websocket, "Book not found")
 
-            # Get book
-            book_result = await db.execute(select(Book).where(Book.id == book_id))
-            book = book_result.scalar_one_or_none()
-            if not book:
-                await websocket.send_json({"error": "Book not found"})
-                await websocket.close()
-                return
+    params = provider.params or {}
+    llm_config = LLMConfig(
+        provider=provider.provider_type,
+        model=data.get("model") or provider.default_model or "gpt-4o-mini",
+        api_key=decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None,
+        base_url=provider.base_url,
+        temperature=data.get("temperature", 0.0),
+        max_tokens=data.get("max_tokens"),
+        requests_per_second=params.get("requests_per_second", settings.requests_per_second),
+        max_retries=params.get("max_retries", settings.llm_max_retries),
+        structured_output_method=params.get("structured_output_method"),
+    )
+    try:
+        llm = create_llm(llm_config)
+        doc = open_document(book.original_path)
+    except Exception as e:
+        return await _fail(websocket, f"Failed to start: {e}")
 
-            # Get existing glossary
-            glossary_result = await db.execute(
-                select(GlossaryEntry).where(GlossaryEntry.book_id == book_id)
-            )
-            existing_glossary = [
-                GlossaryItem(
-                    source_term=e.source_term,
-                    target_term=e.target_term,
-                    context=e.context,
-                    do_not_translate=e.do_not_translate,
-                )
-                for e in glossary_result.scalars().all()
-            ]
+    pipeline = TranslationPipeline(
+        llm=llm,
+        source_language=data.get("source_language") or book.source_language or "english",
+        target_language=data.get("target_language") or book.target_language or "italian",
+        chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
+        max_retries=1,
+        style_instructions=data.get("style_instructions", ""),
+        enable_review=data.get("enable_review", settings.enable_review),
+    )
+    active_jobs[book_id] = pipeline
 
-            # Create LLM
-            api_key = (
-                decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
-            )
-            provider_params = provider.params or {}
-            llm_config = LLMConfig(
-                provider=provider.provider_type,
-                model=data.get("model") or provider.default_model or "gpt-4o-mini",
-                api_key=api_key,
-                base_url=provider.base_url,
-                temperature=data.get("temperature", 0.0),
-                max_tokens=data.get("max_tokens"),
-                requests_per_second=provider_params.get(
-                    "requests_per_second", settings.requests_per_second
-                ),
-                max_retries=provider_params.get("max_retries", settings.llm_max_retries),
-                structured_output_method=provider_params.get("structured_output_method"),
-            )
+    store = JobStore(book_id)
+    status, output_path, error = BookStatus.failed, None, None
+    final_message: dict | None = None
 
-            try:
-                llm = create_llm(llm_config)
-            except Exception as e:
-                await websocket.send_json({"error": f"Failed to create LLM: {str(e)}"})
-                await websocket.close()
-                return
+    async def send(message: dict) -> None:
+        try:
+            await websocket.send_json(message)
+        except Exception:
+            pass  # client gone: the listener pauses the job, progress is already saved
 
-            # Create pipeline
-            source_lang = data.get("source_language", book.source_language or "english")
-            target_lang = data.get("target_language", book.target_language or "italian")
+    async def listen_for_stop() -> None:
+        try:
+            while True:
+                msg = await websocket.receive_json()
+                if msg.get("action") == "stop":
+                    pipeline.cancel()  # "cancelled" is sent once the pause is persisted
+                    return
+        except Exception:  # disconnect
+            pipeline.cancel()
 
-            pipeline = TranslationPipeline(
-                llm=llm,
-                source_language=source_lang,
-                target_language=target_lang,
-                chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
-                max_retries=1,
-                style_instructions=data.get("style_instructions", ""),
-                enable_review=data.get("enable_review", settings.enable_review),
-            )
-
-            active_jobs[book_id] = pipeline
-
-            # Update book status
-            book.status = BookStatus.translating
-            await db.commit()
-
-            # Create translation job record
-            job = TranslationJob(
-                book_id=book_id,
-                provider=provider.provider_type,
-                model=llm_config.model,
-                params={"temperature": llm_config.temperature},
-                status="running",
-            )
-            db.add(job)
-            await db.commit()
-
-        # Load EPUB and start translation
-        epub_book = EpubService.load_book(book.original_path)
-
-        await websocket.send_json(
+    listener = asyncio.create_task(listen_for_stop())
+    try:
+        resume = await store.prepare(doc.units, restart=bool(data.get("restart")))
+        pipeline.set_glossary(resume.glossary)
+        await store.start(
+            provider.provider_type,
+            llm_config.model,
+            {"temperature": llm_config.temperature, "restart": bool(data.get("restart"))},
+        )
+        await send(
             {
                 "event": "started",
-                "message": f"Translation started: {source_lang} → {target_lang}",
+                "message": f"Translation started: {pipeline.source_language} → "
+                f"{pipeline.target_language}"
+                + (
+                    f" (resuming: {len(resume.completed)} chapter(s) done)"
+                    if resume.previous
+                    else ""
+                ),
+                "data": {"resumed_chapters": sorted(resume.completed)},
             }
         )
 
-        # Run translation with progress streaming
-        # Create a background task to listen for the cancel message
-        async def listen_for_cancel():
-            try:
-                while True:
-                    msg = await websocket.receive_json()
-                    if msg.get("action") == "stop":
-                        pipeline.cancel()
-                        await websocket.send_json(
-                            {"event": "cancelled", "message": "Translation cancelled"}
-                        )
-                        break
-            except WebSocketDisconnect:
-                pipeline.cancel()
-            except Exception:
-                pass
+        output = settings.translated_dir / f"{book_id}_{Path(book.filename).stem}{doc.suffix}"
+        async for event in translate_document(
+            doc,
+            pipeline,
+            output,
+            previous=resume.previous,
+            completed=resume.completed,
+            analysis=resume.analysis,
+            max_concurrency=params.get("max_concurrency", settings.max_concurrency),
+        ):
+            await store.handle(event)
+            if event.event_type == "job_complete":
+                output_path = event.data["output_path"]
+                status = BookStatus.failed if event.data["failed_units"] else BookStatus.completed
+                # Final messages are sent only after the DB is updated (below): a client
+                # closing on them must not be mistaken for a cancellation.
+                listener.cancel()
+                final_message = _client_message(event)
+            else:
+                await send(_client_message(event))
 
-        listener_task = asyncio.create_task(listen_for_cancel())
-
-        try:
-            translated_chapters: dict[int, dict] = {}
-            output_path: str | None = None
-            completion_message: dict | None = None
-            async for progress in EpubService.translate_book(
-                epub_book, pipeline, existing_glossary
-            ):
-                if pipeline._cancelled:
-                    break
-
-                # Capture per-chapter HTML for preview/DB persistence
-                if progress.event_type == "chapter_saved":
-                    translated_chapters[progress.data["order_index"]] = {
-                        "item_id": progress.data["item_id"],
-                        "translated_html": progress.data["translated_html"],
-                    }
-                elif progress.event_type == "job_complete":
-                    output_path = progress.data.get("output_path")
-
-                # Send progress to client (omit bulky HTML payload)
-                client_data = progress.data
-                if progress.event_type == "chapter_saved":
-                    client_data = {k: v for k, v in progress.data.items() if k != "translated_html"}
-                message = {
-                    "event": progress.event_type,
-                    "chapter_index": progress.chapter_index,
-                    "total_chapters": progress.total_chapters,
-                    "chunk_index": progress.chunk_index,
-                    "total_chunks": progress.total_chunks,
-                    "message": progress.message,
-                    "data": client_data,
-                }
-                if progress.event_type == "job_complete":
-                    # Sent only after the DB is updated: a client closing on this event
-                    # must not be mistaken for a cancellation.
-                    listener_task.cancel()
-                    completion_message = message
-                else:
-                    await websocket.send_json(message)
-
-            # Update book status on completion
-            async with async_session() as db:
-                book_result = await db.execute(select(Book).where(Book.id == book_id))
-                book = book_result.scalar_one_or_none()
-                if book and not pipeline._cancelled:
-                    book.status = BookStatus.completed
-                    if output_path:
-                        book.translated_path = output_path
-                    book.translated_chapters = len(translated_chapters)
-
-                    # Persist per-chapter translated HTML for preview
-                    chapters_result = await db.execute(
-                        select(Chapter)
-                        .where(Chapter.book_id == book_id)
-                        .order_by(Chapter.order_index)
-                    )
-                    existing_chapters = {c.order_index: c for c in chapters_result.scalars().all()}
-                    for order_index, ch_data in translated_chapters.items():
-                        chapter = existing_chapters.get(order_index)
-                        if chapter:
-                            chapter.translated_html = ch_data["translated_html"]
-                        else:
-                            db.add(
-                                Chapter(
-                                    book_id=book_id,
-                                    item_id=ch_data["item_id"],
-                                    order_index=order_index,
-                                    translated_html=ch_data["translated_html"],
-                                )
-                            )
-
-                    # Save glossary to DB
-                    for entry in pipeline.glossary.entries:
-                        existing = await db.execute(
-                            select(GlossaryEntry).where(
-                                GlossaryEntry.book_id == book_id,
-                                GlossaryEntry.source_term == entry.source_term,
-                            )
-                        )
-                        if not existing.scalar_one_or_none():
-                            db.add(
-                                GlossaryEntry(
-                                    book_id=book_id,
-                                    source_term=entry.source_term,
-                                    target_term=entry.target_term,
-                                    context=entry.context,
-                                    do_not_translate=entry.do_not_translate,
-                                )
-                            )
-                    await db.commit()
-                elif book:
-                    book.status = BookStatus.failed
-                    await db.commit()
-
-            if completion_message:
-                await websocket.send_json(completion_message)
-
-        except Exception as e:
-            await websocket.send_json({"event": "error", "message": str(e)})
-            async with async_session() as db:
-                book_result = await db.execute(select(Book).where(Book.id == book_id))
-                book = book_result.scalar_one_or_none()
-                if book:
-                    book.status = BookStatus.failed
-                    await db.commit()
-
-        finally:
-            listener_task.cancel()
-            active_jobs.pop(book_id, None)
-
-    except WebSocketDisconnect:
-        if book_id in active_jobs:
-            active_jobs[book_id].cancel()
-            active_jobs.pop(book_id, None)
+        if pipeline._cancelled and final_message is None:
+            status = BookStatus.paused
+            final_message = {"event": "cancelled", "message": "Translation paused, progress saved"}
     except Exception as e:
-        try:
-            await websocket.send_json({"event": "error", "message": str(e)})
-        except Exception:
-            pass
+        error = str(e)
+        await send({"event": "error", "message": f"Translation failed: {e}"})
+    finally:
+        listener.cancel()
+        active_jobs.pop(book_id, None)
+        await store.finish(status, output_path, error)
+
+    if final_message:
+        await send(final_message)
+    try:
+        await websocket.close()
+    except Exception:
+        pass
 
 
 @ws_router.post("/api/translate/{book_id}/stop")
 async def stop_translation(book_id: int):
-    """Stop an active translation job."""
+    """Stop (pause) an active translation job."""
     pipeline = active_jobs.get(book_id)
     if pipeline:
         pipeline.cancel()

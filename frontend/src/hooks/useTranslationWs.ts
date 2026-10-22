@@ -9,6 +9,8 @@ interface TranslateOptions {
   model?: string;
   temperature?: number;
   styleInstructions?: string;
+  /** Discard saved progress instead of resuming from it. */
+  restart?: boolean;
 }
 
 export function useTranslationWs() {
@@ -40,6 +42,7 @@ export function useTranslationWs() {
             model: options.model,
             temperature: options.temperature ?? 0.0,
             style_instructions: options.styleInstructions || "",
+            restart: options.restart ?? false,
           }),
         );
       };
@@ -65,9 +68,10 @@ export function useTranslationWs() {
         }
 
         if (data.event === "job_complete") {
-          updateBookStatus(options.bookId, "completed");
-        } else if (data.event === "error") {
-          // Don't change status on non-fatal errors
+          const failed = (data.data?.failed_units as unknown[] | undefined) ?? [];
+          updateBookStatus(options.bookId, failed.length ? "failed" : "completed");
+        } else if (data.event === "cancelled") {
+          updateBookStatus(options.bookId, "paused");
         }
       };
 

@@ -18,8 +18,9 @@ class BookStatus(str, enum.Enum):
     analyzing = "analyzing"
     ready = "ready"
     translating = "translating"
+    paused = "paused"  # interrupted (stop, disconnect, server restart): resumable
     completed = "completed"
-    failed = "failed"
+    failed = "failed"  # finished with errors or crashed: resumable
 
 
 class ChapterStatus(str, enum.Enum):
@@ -42,6 +43,7 @@ class Book(Base):
     status = Column(SAEnum(BookStatus), default=BookStatus.uploaded)
     total_chapters = Column(Integer, default=0)
     translated_chapters = Column(Integer, default=0)
+    analysis = Column(JSON, nullable=True)  # genre/tone/summary, reused when resuming
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -64,6 +66,8 @@ class Chapter(Base):
     order_index = Column(Integer, nullable=False)
     original_html = Column(Text, nullable=True)
     translated_html = Column(Text, nullable=True)
+    # Checkpoint: one translation per block (null = not translated yet), saved per chunk
+    block_translations = Column(JSON, nullable=True)
     status = Column(SAEnum(ChapterStatus), default=ChapterStatus.pending)
 
     book = relationship("Book", back_populates="chapters")
