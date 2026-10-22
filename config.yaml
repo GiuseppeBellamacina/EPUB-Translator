@@ -21,6 +21,11 @@ providers:
     api_key_env: OPENAI_API_KEY
     default_model: gpt-4.1-nano
 
+  # Local models served by Ollama on the host (http://host.docker.internal:11434 by
+  # default, EPUB_OLLAMA_BASE_URL or base_url to change it); the model list is fetched live.
+  - name: ollama
+    type: ollama
+
   # Deterministic offline provider ("BAU ... MIAO"), no key needed.
   - name: fake
     type: fake

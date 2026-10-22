@@ -82,7 +82,7 @@ Defaults live in `Settings`, `config.yaml` `translation:` overrides them at star
 - **Model list**: `config.yaml` `pricing.models`, plus the default models of configured providers. With `provider_id` + `model` the endpoint estimates just that model.
 
 **Model picker** (`GET /api/providers/{id}/models`; `POST /api/providers/models` for a provider not saved yet, also a key check, `services/model_catalog.py`, `components/ModelPicker.tsx`): models are listed live from the provider's API.
-- **How each provider is listed**: OpenAI and Anthropic through their official SDKs; OpenAI-compatible routers such as OpenRouter through the OpenAI SDK with `base_url` (their listing includes prices); Ollama via `/api/tags`.
+- **How each provider is listed**: OpenAI and Anthropic through their official SDKs; OpenAI-compatible routers such as OpenRouter through the OpenAI SDK with `base_url` (their listing includes prices); Ollama via `/api/tags` at the provider's `base_url` or `ollama_base_url` (default `http://host.docker.internal:11434`: the host seen from the container; `extra_hosts: host-gateway` in compose for Linux), with a readable "Ollama is not running at …" error.
 - **Filtering**: OpenAI's list is reduced to chat models usable with chat completions; embeddings, audio, image, `-pro` and dated snapshots that have an alias are dropped.
 - **Prices**: `price_for` maps router names (`openai/gpt-4.1-mini`, `*:free`) to known prices.
 - **Caching**: 10 minutes per provider configuration.

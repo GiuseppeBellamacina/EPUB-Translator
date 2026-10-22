@@ -143,7 +143,7 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
         case "ollama":
             from langchain_ollama import ChatOllama
 
-            params["base_url"] = config.base_url or "http://localhost:11434"
+            params["base_url"] = config.base_url or settings.ollama_base_url
             params.update(config.extra_params)
             return ChatOllama(**params)
 

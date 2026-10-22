@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     llm_max_output_tokens: int = 4096  # per call; a chunk is <= ~1000 source tokens
     llm_reasoning_max_output_tokens: int = 16384  # reasoning models: thinking shares the cap
     llm_timeout: float = 120  # seconds per request (0 = SDK default, 10 minutes)
+
+    # Ollama on the host, seen from the backend container (provider base_url overrides it)
+    ollama_base_url: str = "http://host.docker.internal:11434"
     enable_review: bool = True
 
     # Model prices for cost estimates (LiteLLM's public list; "" = offline, bundled snapshot)

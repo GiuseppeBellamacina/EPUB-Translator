@@ -13,6 +13,9 @@ services:
     environment:
       - EPUB_ENV_FILE=/run/secrets/app.env
       - EPUB_ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-secret}
+    extra_hosts:
+      # Ollama (or other local servers) on the host; built in on Docker Desktop, needed on Linux
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   frontend:
