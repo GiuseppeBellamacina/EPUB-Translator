@@ -1,0 +1,25 @@
+# Development override: hot reload, test/lint tooling, source bind-mounted.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm backend pytest
+services:
+  backend:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/app
+    restart: "no"
+
+  frontend:
+    image: oven/bun:1
+    build: !reset null
+    working_dir: /app
+    command: sh -c "bun install && bun run dev --host 0.0.0.0"
+    environment:
+      - VITE_PROXY_TARGET=http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    restart: "no"
+
+volumes:
+  frontend_node_modules:
