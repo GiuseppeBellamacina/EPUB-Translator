@@ -1,9 +1,9 @@
 """REST API routes for EPUB Translator."""
 
 import shutil
+import uuid
 from pathlib import Path
 
-import ebooklib
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,7 @@ from app.core.encryption import encrypt_api_key
 from app.core.llm_factory import LLMConfig, test_llm_connection
 from app.db.database import get_db
 from app.db.models import Book, BookStatus, Chapter, ChapterStatus, GlossaryEntry, ProviderConfig
-from app.services.epub_service import EpubService
+from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
 
 router = APIRouter()
@@ -82,48 +82,49 @@ async def test_provider(data: TestConnectionRequest):
 # === BOOKS ===
 
 
+SUPPORTED_SUFFIXES = {".epub", ".pdf"}
+
+
 @router.post("/upload", response_model=BookResponse)
 async def upload_book(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    if not file.filename or not file.filename.endswith(".epub"):
-        raise HTTPException(400, "Only .epub files are supported")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        raise HTTPException(400, "Only .epub and .pdf files are supported")
 
-    # Save uploaded file
-    upload_path = settings.uploads_dir / file.filename
+    # Unique name on disk: two uploads with the same filename must not overwrite each other
+    upload_path = settings.uploads_dir / f"{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Parse EPUB to get metadata
     try:
-        epub_book = EpubService.load_book(upload_path)
-        info = EpubService.get_book_info(epub_book)
+        doc = open_document(upload_path)
+        info, units = doc.info(), doc.units
     except Exception as e:
         upload_path.unlink(missing_ok=True)
-        raise HTTPException(400, f"Invalid EPUB file: {str(e)}")
+        raise HTTPException(400, f"Invalid {suffix[1:].upper()} file: {e}")
 
-    # Create book record
     book = Book(
-        filename=file.filename,
+        filename=Path(file.filename).name,
         original_path=str(upload_path),
-        source_language=info.get("language", "english"),
+        source_language=info.get("language") or "english",
         target_language="italian",
         status=BookStatus.uploaded,
-        total_chapters=info["total_chapters"],
+        total_chapters=len(units),
     )
     db.add(book)
     await db.commit()
     await db.refresh(book)
 
-    # Create chapter records
-    chapters = EpubService.get_chapters(epub_book)
-    for ch in chapters:
-        chapter = Chapter(
-            book_id=book.id,
-            item_id=ch["item_id"],
-            title=ch["title"],
-            order_index=ch["index"],
-            status=ChapterStatus.pending,
+    for i, unit in enumerate(units):
+        db.add(
+            Chapter(
+                book_id=book.id,
+                item_id=unit.item_id,
+                title=unit.title,
+                order_index=i,
+                status=ChapterStatus.pending,
+            )
         )
-        db.add(chapter)
     await db.commit()
 
     return book
@@ -167,38 +168,29 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get("/books/{book_id}/preview")
 async def get_preview(book_id: int, chapter_index: int = 0, db: AsyncSession = Depends(get_db)):
-    """Get side-by-side preview of original vs translated for a chapter."""
-    result = await db.execute(select(Book).where(Book.id == book_id))
-    book = result.scalar_one_or_none()
+    """Get side-by-side preview of original vs translated for a chapter (or PDF page)."""
+    book = await db.get(Book, book_id)
     if not book:
         raise HTTPException(404, "Book not found")
 
-    # Load original EPUB
-    epub_book = EpubService.load_book(book.original_path)
-    doc_items = [i for i in epub_book.get_items() if i.get_type() == ebooklib.ITEM_DOCUMENT]
-
-    if chapter_index >= len(doc_items):
+    doc = open_document(book.original_path)
+    if not 0 <= chapter_index < len(doc.units):
         raise HTTPException(400, "Chapter index out of range")
 
-    original_html = doc_items[chapter_index].get_content().decode("utf-8", errors="replace")
-    original_text = extract_visible_text(original_html)
-
-    # Get translated content from DB
-    chapters_result = await db.execute(
-        select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.order_index)
+    result = await db.execute(
+        select(Chapter).where(Chapter.book_id == book_id, Chapter.order_index == chapter_index)
     )
-    chapters = chapters_result.scalars().all()
-
+    chapter = result.scalar_one_or_none()
     translated_text = ""
-    if chapter_index < len(chapters) and chapters[chapter_index].translated_html:
-        translated_text = extract_visible_text(chapters[chapter_index].translated_html)
+    if chapter and chapter.translated_html:
+        translated_text = extract_visible_text(chapter.translated_html)
 
     return {
         "chapter_index": chapter_index,
-        "total_chapters": len(doc_items),
-        "original_text": original_text,
+        "total_chapters": len(doc.units),
+        "original_text": doc.text(chapter_index),
         "translated_text": translated_text,
-        "original_html": original_html,
+        "original_html": doc.render(chapter_index, None) or "",
     }
 
 
@@ -218,7 +210,7 @@ async def download_book(book_id: int, db: AsyncSession = Depends(get_db)):
     return FileResponse(
         path=str(path),
         filename=f"translated_{book.filename}",
-        media_type="application/epub+zip",
+        media_type="application/pdf" if path.suffix == ".pdf" else "application/epub+zip",
     )
 
 

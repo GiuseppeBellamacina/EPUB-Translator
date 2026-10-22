@@ -18,8 +18,8 @@ export function UploadPage() {
 
   const handleFile = useCallback(
     async (file: File) => {
-      if (!file.name.endsWith(".epub")) {
-        setError("Only .epub files are supported");
+      if (!/\.(epub|pdf)$/i.test(file.name)) {
+        setError("Only .epub and .pdf files are supported");
         return;
       }
 
@@ -61,10 +61,10 @@ export function UploadPage() {
       <div className="max-w-lg w-full animate-fade-in-up">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-semibold mb-2 tracking-tight text-gray-900 dark:text-gray-100">
-            Translate an EPUB
+            Translate an EPUB or PDF
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Upload your EPUB file to start an intelligent translation with
+            Upload your EPUB or PDF file to start an intelligent translation with
             consistent terminology
           </p>
         </div>
@@ -99,14 +99,14 @@ export function UploadPage() {
                   </span>{" "}
                   or drag and drop
                 </p>
-                <p className="text-xs text-gray-400">EPUB files only</p>
+                <p className="text-xs text-gray-400">EPUB or PDF — the output keeps the same format and layout</p>
               </>
             )}
           </div>
           <input
             type="file"
             className="hidden"
-            accept=".epub"
+            accept=".epub,.pdf"
             onChange={handleInputChange}
             disabled={uploading}
           />

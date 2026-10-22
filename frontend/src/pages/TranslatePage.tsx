@@ -119,6 +119,9 @@ export function TranslatePage() {
         l.event === "job_complete" &&
         !((l.data?.failed_units as unknown[] | undefined) ?? []).length,
     );
+  const unitLabel = book.filename.toLowerCase().endsWith(".pdf")
+    ? "pages"
+    : "chapters";
   // Chapters run concurrently: progress is the count of finished chapters
   const finishedChapters = logs.length
     ? logs.filter(
@@ -147,7 +150,7 @@ export function TranslatePage() {
                 {book.filename}
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
-                {book.total_chapters} chapters
+                {book.total_chapters} {unitLabel}
                 <span className="text-gray-300 dark:text-gray-600">·</span>
                 <span className="capitalize">{sourceLang}</span>
                 <span className="text-gray-400">→</span>
@@ -335,7 +338,7 @@ export function TranslatePage() {
             <div className="mb-6 rounded-lg surface p-4 animate-fade-in-up">
               <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300 mb-3">
                 <span className="font-medium">
-                  {finishedChapters} / {book.total_chapters} chapters done
+                  {finishedChapters} / {book.total_chapters} {unitLabel} done
                 </span>
                 {progress.total_chunks > 0 && (
                   <span className="text-gray-400">
