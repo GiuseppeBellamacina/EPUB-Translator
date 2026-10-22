@@ -164,3 +164,25 @@ async def test_startup_recovery_pauses_orphaned_jobs(book_id):
     await recover_interrupted_jobs()
     async with async_session() as s:
         assert (await s.get(Book, book_id)).status == BookStatus.paused
+
+
+@pytest.mark.parametrize("analysis", [None, {"summary": "s"}])  # pause in analysis / in units
+async def test_pause_does_not_wait_for_slow_model_calls(sample_epub, tmp_path, analysis):
+    import asyncio
+    import time
+
+    pipeline = TranslationPipeline(llm=ScriptedLLM(delay=30), enable_review=False)
+    doc = open_document(sample_epub)
+
+    async def pause_soon():
+        await asyncio.sleep(0.3)
+        pipeline.cancel()
+
+    pauser = asyncio.create_task(pause_soon())
+    started = time.monotonic()
+    events = [
+        e async for e in translate_document(doc, pipeline, tmp_path / "o.epub", analysis=analysis)
+    ]
+    await pauser
+    assert time.monotonic() - started < 3
+    assert not any(e.event_type == "job_complete" for e in events)

@@ -80,7 +80,14 @@ async def translate_document(
         text = analysis_text(doc)
         if text:
             try:
-                result = await pipeline.analyze_chapter(text)
+                analysis_call = asyncio.ensure_future(pipeline.analyze_chapter(text))
+                stop = asyncio.ensure_future(pipeline.cancelled.wait())
+                await asyncio.wait({analysis_call, stop}, return_when=asyncio.FIRST_COMPLETED)
+                stop.cancel()
+                if not analysis_call.done():  # paused during the analysis: abandon the call
+                    analysis_call.cancel()
+                    return
+                result = analysis_call.result()
                 pipeline.book_summary = result.summary
                 yield TranslationProgress(
                     event_type="analysis_complete",
@@ -164,14 +171,21 @@ async def translate_document(
         await asyncio.gather(*tasks, return_exceptions=True)
         await queue.put(None)
 
+    async def close_when_cancelled() -> None:
+        # A pause must not wait for model calls in flight (minutes with a slow or
+        # rate-limited model): end the loop now; finished chunks are already queued.
+        await pipeline.cancelled.wait()
+        await queue.put(None)
+
     closer = asyncio.create_task(close_when_done())
+    stopper = asyncio.create_task(close_when_cancelled())
     try:
         while (event := await queue.get()) is not None:
             yield event
             if pipeline._cancelled:
                 break
     finally:
-        for task in [*tasks, closer]:
+        for task in [*tasks, closer, stopper]:
             task.cancel()
 
     if pipeline._cancelled:
