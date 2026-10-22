@@ -16,6 +16,7 @@ from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.core.llm_factory import OPENROUTER_BASE_URL
 from app.services.pricing import ModelPrice, PriceTable
 
 CACHE_TTL = 600
@@ -82,7 +83,9 @@ async def _fetch(
         case "anthropic":
             client = AsyncAnthropic(api_key=api_key, base_url=base_url or None)
             return [ModelOption(m.id, m.display_name) async for m in client.models.list(limit=1000)]
-        case "custom":
+        case "custom" | "openrouter":
+            if provider_type == "openrouter":
+                base_url = base_url or OPENROUTER_BASE_URL
             client = AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
             options = []
             async for m in client.models.list():

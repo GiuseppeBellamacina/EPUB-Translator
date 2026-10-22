@@ -24,15 +24,12 @@ from app.db.models import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
 # Providers auto-created from known keys when config.yaml declares none.
 DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "OPENAI_API_KEY": {"name": "openai", "type": "openai", "default_model": "gpt-4.1-nano"},
     "OPENROUTER_API_KEY": {
         "name": "openrouter",
-        "type": "custom",
-        "base_url": OPENROUTER_BASE_URL,
+        "type": "openrouter",
         "default_model": "nvidia/nemotron-3.5-super-vl:free",
     },
     "ANTHROPIC_API_KEY": {
@@ -85,15 +82,45 @@ def resolve_providers(config: dict[str, Any], keys: dict[str, str]) -> list[dict
 async def bootstrap_providers(db: AsyncSession) -> list[str]:
     """Upsert providers by name. Returns the names configured.
 
-    Rows created in the UI (source 'user') are never taken over by config.yaml.
+    Rows created in the UI (source 'user') are never taken over by config.yaml. A config
+    entry that was renamed keeps its row (same type and endpoint), so past jobs and
+    queued books still find their provider; config rows no longer listed are deactivated.
     """
+    # OpenRouter used to be a "custom" provider with its URL: it has its own type now
+    legacy = await db.execute(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_type == "custom",
+            ProviderConfig.base_url.contains("openrouter.ai"),
+        )
+    )
+    for provider in legacy.scalars():
+        provider.provider_type, provider.base_url = "openrouter", None
+
+    specs = resolve_providers(load_config(), load_keys())
+    wanted = {spec["name"] for spec in specs}
+    result = await db.execute(select(ProviderConfig).where(ProviderConfig.source == "config"))
+    leftovers = [p for p in result.scalars() if p.name not in wanted]
+
     names = []
-    for spec in resolve_providers(load_config(), load_keys()):
+    for spec in specs:
         result = await db.execute(select(ProviderConfig).where(ProviderConfig.name == spec["name"]))
         provider = result.scalar_one_or_none()
         if provider is None:
-            provider = ProviderConfig(name=spec["name"])
-            db.add(provider)
+            provider = next(
+                (
+                    p
+                    for p in leftovers
+                    if p.provider_type == spec["type"] and p.base_url == spec.get("base_url")
+                ),
+                None,
+            )
+            if provider:
+                logger.info("Provider %r renamed to %r", provider.name, spec["name"])
+                leftovers.remove(provider)
+                provider.name = spec["name"]
+            else:
+                provider = ProviderConfig(name=spec["name"])
+                db.add(provider)
         elif provider.source == "user":
             logger.warning("Provider %r was created in the UI: config.yaml skipped", spec["name"])
             continue
@@ -111,6 +138,8 @@ async def bootstrap_providers(db: AsyncSession) -> list[str]:
         if api_key != current:
             provider.api_key_encrypted = encrypt_api_key(api_key) if api_key else None
 
+    for provider in leftovers:  # kept, not deleted: past jobs and queued books refer to it
+        provider.is_active = False
     await db.commit()
     if names:
         logger.info("Bootstrapped providers: %s", ", ".join(names))

@@ -9,9 +9,8 @@ import { Button, Card, Page } from "../components/ui";
 type Status = { state: "checking" } | { state: "ok"; models: number; free: number } | { state: "error"; message: string };
 
 function kindLabel(p: Provider) {
-  if (p.provider_type === "custom" && p.base_url?.includes("openrouter")) return "OpenRouter";
   return (
-    { openai: "OpenAI", anthropic: "Anthropic", ollama: "Ollama", custom: "Custom endpoint", fake: "Offline test" }[
+    { openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter", ollama: "Ollama", custom: "Custom endpoint", fake: "Offline test" }[
       p.provider_type
     ] ?? p.provider_type
   );
