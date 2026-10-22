@@ -33,3 +33,11 @@ translation:
   llm_max_retries: 5 # SDK retries with exponential backoff on 429/5xx
   chain_retries: 3 # whole-call retries (invalid structured output, residual errors)
   enable_review: true # reviewer pass per chunk (doubles the calls)
+
+# Cost estimates shown after upload. Prices are downloaded from LiteLLM's public price
+# list and refreshed daily (EPUB_PRICING_URL / EPUB_PRICING_REFRESH_HOURS); configured
+# providers' default models are added automatically.
+pricing:
+  models:
+    openai: [gpt-4.1-nano, gpt-4o-mini, gpt-5-nano, gpt-4.1-mini, gpt-5-mini, gpt-4.1]
+    anthropic: [claude-haiku-5-5, claude-haiku-4-5, claude-sonnet-5-5, claude-opus-5-5]

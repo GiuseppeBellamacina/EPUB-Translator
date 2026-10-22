@@ -12,6 +12,7 @@ Resilience: an optional client-side rate limiter (requests per second) throttles
 calls, and the provider SDKs retry 429/5xx with exponential backoff (``max_retries``).
 """
 
+import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -20,6 +21,32 @@ from langchain_core.runnables import Runnable
 
 # Reasoning models only accept the default temperature.
 _NO_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_CLAUDE_VERSION = re.compile(r"claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)")
+
+
+def _claude_version(model: str) -> tuple[int, int] | None:
+    match = _CLAUDE_VERSION.match(model)
+    return (int(match.group(1)), int(match.group(2) or 0)) if match else None
+
+
+def accepts_temperature(provider: str, model: str) -> bool:
+    """Claude Opus 4.7+ and the 5.x family reject non-default sampling parameters (400)."""
+    if provider == "anthropic":
+        version = _claude_version(model)
+        return version is None or version < (4, 7)
+    return not model.startswith(_NO_TEMPERATURE_PREFIXES)
+
+
+def thinks_by_default(provider: str, model: str, supports_reasoning: bool) -> bool:
+    """Whether a request without thinking settings makes the model reason (billed as output).
+
+    OpenAI reasoning models always do; Claude 5.x runs adaptive thinking unless told
+    otherwise, while older Claude models only think when explicitly enabled.
+    """
+    if provider == "anthropic":
+        version = _claude_version(model)
+        return supports_reasoning and version is not None and version >= (5, 0)
+    return supports_reasoning
 
 
 class LLMConfig:
@@ -56,7 +83,7 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
     """Create a LangChain chat model from config."""
 
     params: dict[str, Any] = {"model": config.model}
-    if not config.model.startswith(_NO_TEMPERATURE_PREFIXES):
+    if accepts_temperature(config.provider, config.model):
         params["temperature"] = config.temperature
     if config.max_tokens is not None:
         params["max_tokens"] = config.max_tokens

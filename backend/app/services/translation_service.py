@@ -18,22 +18,36 @@ from pathlib import Path
 from typing import Any
 
 from app.agents.pipeline import TranslationPipeline, TranslationProgress
+from app.services.chunker import SmartChunker
 from app.services.documents import Document, Translations
 
 ANALYSIS_MIN_CHARS = 500
+ANALYSIS_MAX_CHARS = 12000  # analyzer truncation (agents/analyzer.py)
 
 
-def _analysis_text(doc: Document) -> str:
-    """First unit with substantial text (skips covers, title pages, empty navs)."""
-    texts = [doc.text(i) for i in range(min(len(doc.units), 10))]
-    return next((t for t in texts if len(t) >= ANALYSIS_MIN_CHARS), max(texts, key=len, default=""))
+def analysis_text(doc: Document, max_chars: int = ANALYSIS_MAX_CHARS) -> str:
+    """Text for the analyzer: from the first substantial unit on, up to ``max_chars``.
+
+    Skips covers, title pages and empty navs; consecutive units are joined so short
+    units (PDF pages) still give the analyzer a real sample of the book.
+    """
+    text, longest = "", ""
+    for i in range(len(doc.units)):
+        unit = doc.text(i).strip()
+        if not text and len(unit) < ANALYSIS_MIN_CHARS:
+            longest = max(longest, unit, key=len)
+            continue
+        text += unit + "\n\n"
+        if len(text) >= max_chars:
+            break
+    return (text or longest)[:max_chars]
 
 
-def _lead_context(doc: Document, index: int, pipeline: TranslationPipeline) -> str:
+def lead_context_for(doc: Document, index: int, chunker: SmartChunker) -> str:
     """Last blocks of the previous unit: PDF sentences often continue on the next page."""
     if index == 0:
         return ""
-    tail = doc.blocks(index - 1, pipeline.chunker)[-pipeline.chunker.overlap_blocks :]
+    tail = doc.blocks(index - 1, chunker)[-chunker.overlap_blocks :]
     return "\n\n".join(b.text for b in tail)
 
 
@@ -55,7 +69,7 @@ async def translate_document(
     if analysis:
         pipeline.book_summary = analysis.get("summary", "")
     else:
-        text = _analysis_text(doc)
+        text = analysis_text(doc)
         if text:
             try:
                 result = await pipeline.analyze_chapter(text)
@@ -101,7 +115,7 @@ async def translate_document(
                     i,
                     total,
                     previous.get(i),
-                    lead_context=_lead_context(doc, i, pipeline),
+                    lead_context=lead_context_for(doc, i, pipeline.chunker),
                 ):
                     if event.event_type == "chapter_done":
                         translations = event.data["translated_blocks"]

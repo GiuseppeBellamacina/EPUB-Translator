@@ -59,6 +59,25 @@ def test_create_llm_wires_rate_limit_retries_and_method():
     assert structured(llm, TranslationResult) is not None
 
 
+@pytest.mark.parametrize(
+    "model, temperature, thinks",
+    [
+        ("claude-haiku-4-5", True, False),
+        ("claude-haiku-4-5-20251001", True, False),
+        ("claude-sonnet-4-6", True, False),
+        ("claude-opus-4-7", False, False),
+        ("claude-sonnet-5", False, True),
+        ("claude-haiku-5-5", False, True),
+        ("claude-opus-5-5", False, True),
+    ],
+)
+def test_claude_sampling_and_thinking_rules(model, temperature, thinks):
+    from app.core.llm_factory import accepts_temperature, thinks_by_default
+
+    assert accepts_temperature("anthropic", model) is temperature
+    assert thinks_by_default("anthropic", model, supports_reasoning=True) is thinks
+
+
 def test_reasoning_models_get_no_temperature():
     assert (
         create_llm(LLMConfig(provider="openai", model="gpt-5-nano", api_key="x")).temperature

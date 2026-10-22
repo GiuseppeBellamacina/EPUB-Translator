@@ -1,7 +1,9 @@
 """REST API routes for EPUB Translator."""
 
+import asyncio
 import shutil
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -19,13 +21,17 @@ from app.api.schemas import (
     ProviderResponse,
     TestConnectionRequest,
 )
+from app.core.bootstrap import load_config
 from app.core.config import settings
 from app.core.encryption import encrypt_api_key
 from app.core.llm_factory import LLMConfig, test_llm_connection
 from app.db.database import get_db
 from app.db.models import Book, BookStatus, Chapter, ChapterStatus, GlossaryEntry, ProviderConfig
+from app.services.chunker import SmartChunker
+from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
+from app.services.pricing import get_prices
 
 router = APIRouter()
 
@@ -192,6 +198,39 @@ async def get_preview(book_id: int, chapter_index: int = 0, db: AsyncSession = D
         "translated_text": translated_text,
         "original_html": doc.render(chapter_index, None) or "",
     }
+
+
+@router.get("/books/{book_id}/estimate")
+async def estimate_cost(
+    book_id: int,
+    target_language: str | None = None,
+    refresh_prices: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Estimated translation cost per model, with current prices."""
+    book = await db.get(Book, book_id)
+    if not book:
+        raise HTTPException(404, "Book not found")
+
+    if book.token_profile is None:
+        chunker = SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2)
+        profile = await asyncio.to_thread(
+            lambda: profile_document(open_document(book.original_path), chunker)
+        )
+        book.token_profile = asdict(profile)
+        await db.commit()
+    profile = TokenProfile(**book.token_profile)
+
+    # Models from config.yaml (pricing.models) plus the defaults of configured providers
+    models = {p: list(names) for p, names in DEFAULT_MODELS.items()}
+    models.update((load_config().get("pricing") or {}).get("models") or {})
+    providers = await db.execute(select(ProviderConfig).where(ProviderConfig.is_active.is_(True)))
+    for provider in providers.scalars():
+        if provider.provider_type in models and provider.default_model:
+            models[provider.provider_type].append(provider.default_model)
+
+    prices = await get_prices(force_refresh=refresh_prices)
+    return estimate(profile, prices, target_language or book.target_language, models)
 
 
 @router.get("/books/{book_id}/download")

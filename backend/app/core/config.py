@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     chain_retries: int = 3  # retries of a whole agent call (parse errors, residual failures)
     enable_review: bool = True
 
+    # Model prices for cost estimates (LiteLLM's public list; "" = offline, bundled snapshot)
+    pricing_url: str = (
+        "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+        "model_prices_and_context_window.json"
+    )
+    pricing_refresh_hours: float = 24
+
     def apply_overrides(self, overrides: dict) -> None:
         for key, value in overrides.items():
             if key in type(self).model_fields:

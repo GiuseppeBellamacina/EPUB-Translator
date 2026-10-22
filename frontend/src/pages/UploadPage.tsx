@@ -6,14 +6,18 @@ import {
   AlertCircle,
   Languages,
   ShieldCheck,
+  ArrowRight,
+  BookOpen,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, type Book } from "../lib/api";
 import { cn } from "../lib/utils";
+import { CostEstimate } from "../components/CostEstimate";
 
 export function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploaded, setUploaded] = useState<Book | null>(null);
   const navigate = useNavigate();
 
   const handleFile = useCallback(
@@ -27,15 +31,14 @@ export function UploadPage() {
       setUploading(true);
 
       try {
-        const book = await api.uploadBook(file);
-        navigate(`/translate/${book.id}`);
+        setUploaded(await api.uploadBook(file));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Upload failed");
       } finally {
         setUploading(false);
       }
     },
-    [navigate],
+    [],
   );
 
   const handleDrop = useCallback(
@@ -55,6 +58,46 @@ export function UploadPage() {
     },
     [handleFile],
   );
+
+  if (uploaded) {
+    const isPdf = uploaded.filename.toLowerCase().endsWith(".pdf");
+    return (
+      <div className="h-full overflow-auto p-8">
+        <div className="max-w-2xl mx-auto w-full space-y-6 animate-fade-in-up">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-md bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
+              <BookOpen className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+                {uploaded.filename}
+              </h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {uploaded.total_chapters} {isPdf ? "pages" : "chapters"} uploaded
+              </p>
+            </div>
+          </div>
+
+          <CostEstimate bookId={uploaded.id} />
+
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => setUploaded(null)}
+              className="px-4 py-2 rounded-md border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+            >
+              Upload another
+            </button>
+            <button
+              onClick={() => navigate(`/translate/${uploaded.id}`)}
+              className="flex items-center gap-2 px-4 py-2 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
+            >
+              Continue to translation <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex items-center justify-center p-8">
