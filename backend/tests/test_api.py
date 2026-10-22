@@ -6,7 +6,7 @@ from app.main import app
 
 @pytest.fixture
 def client(db):
-    from app.api.websocket import recent_events
+    from app.services.job_runner import recent_events
 
     recent_events.clear()  # book ids restart with the fresh schema
     with TestClient(app) as c:
@@ -37,7 +37,7 @@ def _run(client, book_id, provider_id, stop_on=None, **start):
 def test_stop_pauses_and_start_resumes(client, sample_epub, monkeypatch):
     from tests.conftest import ScriptedLLM
 
-    monkeypatch.setattr("app.api.websocket.create_llm", lambda cfg: ScriptedLLM(delay=0.05))
+    monkeypatch.setattr("app.services.job_runner.create_llm", lambda cfg: ScriptedLLM(delay=0.05))
     provider, book = _upload(client, sample_epub)
 
     events = _run(client, book["id"], provider["id"], stop_on="chunk_done")
@@ -91,6 +91,8 @@ def test_progress_without_a_job(client, sample_epub):
         "started_at": None,
         "eta_seconds": None,
         "recent_events": [],
+        "config": None,
+        "queue_status": None,
     }
     assert client.get("/api/books/999/progress").status_code == 404
 

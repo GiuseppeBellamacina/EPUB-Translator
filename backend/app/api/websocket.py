@@ -1,64 +1,45 @@
-"""WebSocket endpoint for real-time translation progress.
+"""WebSocket endpoint that starts and follows a translation job.
 
 Protocol:
     client → {"action": "start", "provider_id": 1, "source_language": "english",
               "target_language": "italian", "model": "...", "restart": false, ...}
+           | {"action": "watch"}                       (follow a running/queued job)
     client → {"action": "stop"}                       (pauses; resumable)
-    server → {"event": ..., "chapter_index": ..., "message": ..., "data": {...}}
+    server → {"event": ..., "chapter_index": ..., "message": ..., "data": {...}, "ts": ...}
 
-A job resumes from its checkpoints by default; ``restart: true`` starts over.
-Stop and disconnect pause the job, errors mark it failed — both are resumable.
+The job runs on the server (``services/job_runner.py``): a disconnect only stops
+following it. A job resumes from its checkpoints by default; ``restart: true``
+starts over. The socket closes once the book's job is over.
 """
 
 import asyncio
-import copy
-import time
-from collections import deque
-from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+from sqlalchemy import select
 
-from app.agents.pipeline import TranslationPipeline, TranslationProgress
-from app.core.config import settings
-from app.core.encryption import decrypt_api_key
-from app.core.llm_factory import LLMConfig, create_llm
 from app.db.database import async_session
-from app.db.models import Book, BookStatus, ProviderConfig
-from app.services.chunker import SmartChunker
-from app.services.documents import open_document
-from app.services.job_store import JobStore
-from app.services.translation_service import translate_document
+from app.db.models import QueueItem
+from app.services import job_runner
+from app.services.job_runner import RunConfig
 
 ws_router = APIRouter()
-
-# Track active translation jobs for cancellation
-active_jobs: dict[int, TranslationPipeline] = {}
-
-# Per book: recent client messages (a page reload shows the latest log) and the
-# current run's start (time, units already done) for the ETA.
-# shortcut: in memory only, lost on restart; persist if the log must survive it.
-recent_events: dict[int, deque] = {}
-run_started: dict[int, tuple[float, int]] = {}
-
-# Bulky payloads persisted server-side but not sent to the client
-_SERVER_ONLY_KEYS = {"translated_html", "translations"}
-
-
-def _client_message(event: TranslationProgress) -> dict:
-    return {
-        "event": event.event_type,
-        "chapter_index": event.chapter_index,
-        "total_chapters": event.total_chapters,
-        "chunk_index": event.chunk_index,
-        "total_chunks": event.total_chunks,
-        "message": event.message,
-        "data": {k: v for k, v in event.data.items() if k not in _SERVER_ONLY_KEYS},
-    }
 
 
 async def _fail(websocket: WebSocket, message: str) -> None:
     await websocket.send_json({"event": "error", "error": message, "message": message})
     await websocket.close()
+
+
+async def _book_waiting(book_id: int) -> bool:
+
+    async with async_session() as db:
+        status = await db.scalar(
+            select(QueueItem.status).where(
+                QueueItem.book_id == book_id, QueueItem.status == "pending"
+            )
+        )
+    return status is not None and job_runner.queue_running()
 
 
 @ws_router.websocket("/ws/translate/{book_id}")
@@ -69,151 +50,53 @@ async def translate_ws(websocket: WebSocket, book_id: int):
     except WebSocketDisconnect:
         return
 
-    if data.get("action") != "start":
-        return await _fail(websocket, "Expected 'start' action")
-    if book_id in active_jobs:
-        return await _fail(websocket, "A translation is already running for this book")
-
-    async with async_session() as db:
-        provider = await db.get(ProviderConfig, data.get("provider_id"))
-        book = await db.get(Book, book_id)
-    if not provider:
-        return await _fail(websocket, "Provider not found")
-    if not book:
-        return await _fail(websocket, "Book not found")
-
-    params = provider.params or {}
-    llm_config = LLMConfig(
-        provider=provider.provider_type,
-        model=data.get("model") or provider.default_model or "gpt-4o-mini",
-        api_key=decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None,
-        base_url=provider.base_url,
-        temperature=data.get("temperature", 0.0),
-        max_tokens=data.get("max_tokens"),
-        requests_per_second=params.get("requests_per_second", settings.requests_per_second),
-        max_retries=params.get("max_retries", settings.llm_max_retries),
-        structured_output_method=params.get("structured_output_method"),
-    )
+    queue = job_runner.subscribe(book_id)  # before starting: no message is missed
     try:
-        llm = create_llm(llm_config)
-        review_llm = None
-        review_model = data.get("review_model")
-        if review_model and review_model != llm_config.model:
-            # Same provider and key; shares the rate limiter so the job keeps its pace
-            review_config = copy.copy(llm_config)
-            review_config.model, review_config.requests_per_second = review_model, None
-            review_llm = create_llm(review_config)
-            review_llm.rate_limiter = llm.rate_limiter
-        doc = open_document(book.original_path)
-    except Exception as e:
-        return await _fail(websocket, f"Failed to start: {e}")
+        if data.get("action") == "start":
+            try:
+                config = RunConfig(**{k: v for k, v in data.items() if k != "action"})
+                await job_runner.enqueue([book_id], config, front=True)
+            except (ValidationError, ValueError) as e:
+                return await _fail(websocket, str(e))
+            if job_runner.active_jobs and book_id not in job_runner.active_jobs:
+                await websocket.send_json(
+                    {"event": "queued", "message": "Waiting for the book before it to finish"}
+                )
+        elif data.get("action") == "watch":
+            if book_id not in job_runner.active_jobs and not await _book_waiting(book_id):
+                return await websocket.close()
+        else:
+            return await _fail(websocket, "Expected 'start' or 'watch' action")
 
-    pipeline = TranslationPipeline(
-        llm=llm,
-        source_language=data.get("source_language") or book.source_language or "english",
-        target_language=data.get("target_language") or book.target_language or "italian",
-        chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
-        max_retries=1,
-        style_instructions=data.get("style_instructions", ""),
-        enable_review=data.get("enable_review", settings.enable_review),
-        review_llm=review_llm,
-    )
-    active_jobs[book_id] = pipeline
+        async def listen_for_stop() -> None:
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    if msg.get("action") == "stop" and not job_runner.stop(book_id):
+                        await job_runner.dequeue(book_id)
+                        queue.put_nowait({"event": "cancelled", "message": "Removed from queue"})
+                        queue.put_nowait(job_runner.FINAL)
+            except Exception:  # disconnect: stop following, the job goes on
+                queue.put_nowait(job_runner.FINAL)
 
-    store = JobStore(book_id)
-    status, output_path, error = BookStatus.failed, None, None
-    final_message: dict | None = None
-
-    events = recent_events[book_id] = deque(maxlen=200)
-
-    async def send(message: dict) -> None:
-        message = {**message, "ts": time.time()}
-        events.append(message)
+        listener = asyncio.create_task(listen_for_stop())
         try:
-            await websocket.send_json(message)
-        except Exception:
-            pass  # client gone: the listener pauses the job, progress is already saved
-
-    async def listen_for_stop() -> None:
-        try:
-            while True:
-                msg = await websocket.receive_json()
-                if msg.get("action") == "stop":
-                    pipeline.cancel()  # "cancelled" is sent once the pause is persisted
-                    return
-        except Exception:  # disconnect
-            pipeline.cancel()
-
-    listener = asyncio.create_task(listen_for_stop())
-    try:
-        resume = await store.prepare(doc.units, restart=bool(data.get("restart")))
-        pipeline.set_glossary(resume.glossary)
-        run_started[book_id] = (time.time(), len(resume.completed))
-        await store.start(
-            provider.provider_type,
-            llm_config.model,
-            {"temperature": llm_config.temperature, "restart": bool(data.get("restart"))},
-        )
-        await send(
-            {
-                "event": "started",
-                "message": f"Translation started: {pipeline.source_language} → "
-                f"{pipeline.target_language}"
-                + (
-                    f" (resuming: {len(resume.completed)} chapter(s) done)"
-                    if resume.previous
-                    else ""
-                ),
-                "data": {"resumed_chapters": sorted(resume.completed)},
-            }
-        )
-
-        output = settings.translated_dir / f"{book_id}_{Path(book.filename).stem}{doc.suffix}"
-        async for event in translate_document(
-            doc,
-            pipeline,
-            output,
-            previous=resume.previous,
-            completed=resume.completed,
-            analysis=resume.analysis,
-            max_concurrency=params.get("max_concurrency", settings.max_concurrency),
-        ):
-            await store.handle(event)
-            if event.event_type == "job_complete":
-                output_path = event.data["output_path"]
-                status = BookStatus.failed if event.data["failed_units"] else BookStatus.completed
-                # Final messages are sent only after the DB is updated (below): a client
-                # closing on them must not be mistaken for a cancellation.
-                listener.cancel()
-                final_message = _client_message(event)
-            else:
-                await send(_client_message(event))
-
-        if pipeline._cancelled and final_message is None:
-            status = BookStatus.paused
-            final_message = {"event": "cancelled", "message": "Translation paused, progress saved"}
-    except Exception as e:
-        error = str(e)
-        await send({"event": "error", "message": f"Translation failed: {e}"})
-    finally:
-        listener.cancel()
-        active_jobs.pop(book_id, None)
-        run_started.pop(book_id, None)
-        await store.finish(status, output_path, error)
-
-    if final_message:
-        await send(final_message)
-    try:
+            while (message := await queue.get()) is not job_runner.FINAL:
+                await websocket.send_json(message)
+        finally:
+            listener.cancel()
         await websocket.close()
-    except Exception:
-        pass
+    except (WebSocketDisconnect, RuntimeError):
+        pass  # client gone: the job keeps running
+    finally:
+        job_runner.unsubscribe(book_id, queue)
 
 
 @ws_router.post("/api/translate/{book_id}/stop")
 async def stop_translation(book_id: int):
-    """Stop (pause) an active translation job."""
-    pipeline = active_jobs.get(book_id)
-    if pipeline:
-        pipeline.cancel()
+    """Pause a book's running job (and halt the queue), or take it out of the queue."""
+    if job_runner.stop(book_id):
         return {"status": "stopping"}
+    if await job_runner.dequeue(book_id):
+        return {"status": "dequeued"}
     return {"status": "no_active_job"}

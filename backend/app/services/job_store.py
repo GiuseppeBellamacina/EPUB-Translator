@@ -119,6 +119,40 @@ class JobStore:
             await db.commit()
             self.job_id = job.id
 
+    async def import_glossary(self, from_book_id: int) -> list[GlossaryItem]:
+        """Copy another book's glossary; terms this book already has are kept as they are."""
+        async with async_session() as db:
+            existing = {e.source_term.lower() for e in await self._glossary_rows(db)}
+            result = await db.execute(
+                select(GlossaryEntry).where(GlossaryEntry.book_id == from_book_id)
+            )
+            added = []
+            for entry in result.scalars():
+                if entry.source_term.lower() in existing:
+                    continue
+                existing.add(entry.source_term.lower())
+                # user_edited: kept by a later "start over", like terms typed in the editor
+                db.add(
+                    GlossaryEntry(
+                        book_id=self.book_id,
+                        source_term=entry.source_term,
+                        target_term=entry.target_term,
+                        context=entry.context,
+                        do_not_translate=entry.do_not_translate,
+                        user_edited=True,
+                    )
+                )
+                added.append(
+                    GlossaryItem(
+                        source_term=entry.source_term,
+                        target_term=entry.target_term,
+                        context=entry.context,
+                        do_not_translate=entry.do_not_translate,
+                    )
+                )
+            await db.commit()
+        return added
+
     async def handle(self, event: TranslationProgress) -> None:
         match event.event_type:
             case "analysis_complete":
