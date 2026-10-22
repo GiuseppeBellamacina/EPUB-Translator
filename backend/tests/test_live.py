@@ -26,14 +26,18 @@ def _provider(name: str) -> dict:
     return spec
 
 
-@pytest.mark.parametrize("name", ["openrouter-free", "openai-cheap"])
-async def test_translate_one_sentence(name):
+# config.yaml has no default models: a cheap one per provider (free on OpenRouter)
+@pytest.mark.parametrize(
+    "name, model",
+    [("OpenRouter", "nvidia/nemotron-3.5-super-vl:free"), ("OpenAI", "gpt-4.1-nano")],
+)
+async def test_translate_one_sentence(name, model):
     spec = _provider(name)
     params = spec.get("params") or {}
     llm = create_llm(
         LLMConfig(
             provider=spec["type"],
-            model=spec["default_model"],
+            model=model,
             api_key=spec["api_key"],
             base_url=spec.get("base_url"),
             max_retries=2,

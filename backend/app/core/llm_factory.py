@@ -24,6 +24,9 @@ from app.core.config import settings
 # OpenAI reasoning models (gpt-5 and later, the o-series) only accept the default temperature;
 # by family, not a list of names, so new models (gpt-6-luna, o5) are covered.
 _OPENAI_REASONING = re.compile(r"(gpt-([5-9]|\d{2,})|o\d)(?!\d)")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Providers reached over HTTP with an SDK: they get an output cap, a timeout and retries
+_REMOTE = ("openai", "anthropic", "custom", "openrouter")
 _CLAUDE_VERSION = re.compile(r"claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)")
 
 
@@ -91,7 +94,7 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
         params["temperature"] = config.temperature
     if config.max_tokens is not None:
         params["max_tokens"] = config.max_tokens
-    elif config.provider in ("openai", "anthropic", "custom"):
+    elif config.provider in _REMOTE:
         # Bound every call: a model stuck repeating itself otherwise runs to its own
         # maximum (32k tokens, minutes) before failing. Reasoning models get more
         # room because thinking counts against the same limit.
@@ -100,7 +103,7 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
             if accepts_temperature(config.provider, config.model)
             else settings.llm_reasoning_max_output_tokens
         )
-    if config.provider in ("openai", "anthropic", "custom") and settings.llm_timeout:
+    if config.provider in _REMOTE and settings.llm_timeout:
         params["timeout"] = settings.llm_timeout  # per request; SDK default is 10 minutes
     if config.top_p is not None:
         params["top_p"] = config.top_p
@@ -112,7 +115,7 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
         )
     if config.structured_output_method:
         params["metadata"] = {"structured_output_method": config.structured_output_method}
-    if config.max_retries is not None and config.provider in ("openai", "anthropic", "custom"):
+    if config.max_retries is not None and config.provider in _REMOTE:
         params["max_retries"] = config.max_retries
 
     match config.provider:
@@ -149,13 +152,16 @@ def create_llm(config: LLMConfig) -> BaseChatModel:
             params.update(config.extra_params)
             return ChatOllama(**params)
 
-        case "custom":
-            # OpenAI-compatible endpoint (vLLM, LMStudio, Together, etc.)
+        case "custom" | "openrouter":
+            # OpenAI-compatible endpoint (OpenRouter, vLLM, LMStudio, Together, etc.)
             from langchain_openai import ChatOpenAI
 
-            if not config.base_url:
+            base_url = config.base_url or (
+                OPENROUTER_BASE_URL if config.provider == "openrouter" else None
+            )
+            if not base_url:
                 raise ValueError("Custom provider requires base_url")
-            params["base_url"] = config.base_url
+            params["base_url"] = base_url
             if config.api_key:
                 params["api_key"] = config.api_key
             else:

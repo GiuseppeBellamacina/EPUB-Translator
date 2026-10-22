@@ -15,8 +15,7 @@ interface Kind {
   label: string;
   type: string;
   key: KeyMode;
-  /** fixed endpoint (OpenRouter), or whether the user gives one */
-  baseUrl?: string;
+  /** whether the user gives an endpoint */
   url?: "optional" | "required";
   urlPlaceholder?: string;
   keyUrl?: string;
@@ -25,14 +24,13 @@ interface Kind {
 const KINDS: Kind[] = [
   { id: "openai", label: "OpenAI", type: "openai", key: "required", keyUrl: "https://platform.openai.com/api-keys" },
   { id: "anthropic", label: "Anthropic", type: "anthropic", key: "required", keyUrl: "https://console.anthropic.com/settings/keys" },
-  { id: "openrouter", label: "OpenRouter", type: "custom", key: "required", baseUrl: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/keys" },
+  { id: "openrouter", label: "OpenRouter", type: "openrouter", key: "required", keyUrl: "https://openrouter.ai/keys" },
   { id: "ollama", label: "Ollama", type: "ollama", key: "none", url: "optional", urlPlaceholder: "http://host.docker.internal:11434" },
   { id: "custom", label: "Custom", type: "custom", key: "optional", url: "required", urlPlaceholder: "http://my-server:8000/v1" },
 ]; // fmt: off
 
 function kindOf(p: Provider): Kind {
-  if (p.provider_type === "custom" && p.base_url?.includes("openrouter")) return KINDS[2];
-  return KINDS.find((k) => k.type === p.provider_type && k.id !== "openrouter") ?? KINDS[4];
+  return KINDS.find((k) => k.type === p.provider_type) ?? KINDS[4];
 }
 
 type Check = { state: "idle" | "checking" | "ok" | "error"; message?: string };
@@ -60,7 +58,7 @@ export function ProviderWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const baseUrl = kind.baseUrl ?? (url.trim() || undefined);
+  const baseUrl = url.trim() || undefined;
   const keyMissing = kind.key === "required" && !apiKey.trim() && !editing;
   const urlMissing = kind.url === "required" && !url.trim();
 
@@ -112,7 +110,6 @@ export function ProviderWizard({
 
   const pickKind = (k: Kind) => {
     setKind(k);
-    setUrl(k.baseUrl ? "" : url);
     setModel("");
     setCheck({ state: "idle" });
     if (!name || KINDS.some((x) => x.id === name)) setName(k.id);
@@ -155,7 +152,6 @@ export function ProviderWizard({
                   ) : (
                     <ProviderLogo
                       providerType={k.type}
-                      baseUrl={k.baseUrl}
                       label={false}
                       className="h-5.5 w-5.5"
                     />

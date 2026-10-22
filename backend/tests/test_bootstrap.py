@@ -95,3 +95,55 @@ def test_update_provider_keeps_key_unless_given(db):
             return (await s.get(ProviderConfig, created["id"])).api_key_encrypted
 
     assert decrypt_api_key(asyncio.run(key())) == "sk-1"
+
+
+async def test_renamed_entries_keep_their_row_and_removed_ones_are_deactivated(
+    db, tmp_path, monkeypatch
+):
+    env, config = tmp_path / ".env", tmp_path / "config.yaml"
+    env.write_text("OPENROUTER-API-KEY=or-1\n")
+    monkeypatch.setattr(bootstrap.settings, "config_file", config)
+    monkeypatch.setattr(bootstrap.settings, "env_file", env)
+    config.write_text(CONFIG)
+    async with async_session() as s:
+        await bootstrap.bootstrap_providers(s)
+        router_id = (
+            await s.execute(select(ProviderConfig.id).where(ProviderConfig.name == "router"))
+        ).scalar_one()
+
+    config.write_text(
+        CONFIG.replace("name: router", "name: OpenRouter").replace(
+            "  - {name: fake, type: fake}\n", ""
+        )
+    )
+    async with async_session() as s:
+        assert await bootstrap.bootstrap_providers(s) == ["OpenRouter"]
+    async with async_session() as s:
+        rows = {p.name: p for p in (await s.execute(select(ProviderConfig))).scalars()}
+    assert set(rows) == {"OpenRouter", "fake"}
+    assert rows["OpenRouter"].id == router_id and rows["OpenRouter"].is_active
+    assert decrypt_api_key(rows["OpenRouter"].api_key_encrypted) == "or-1"
+    assert rows["fake"].is_active is False
+
+
+async def test_openrouter_custom_rows_become_their_own_type(db, tmp_path, monkeypatch):
+    from app.core.llm_factory import LLMConfig, create_llm
+
+    monkeypatch.setattr(bootstrap.settings, "config_file", tmp_path / "none.yaml")
+    monkeypatch.setattr(bootstrap.settings, "env_file", tmp_path / "none.env")
+    async with async_session() as s:
+        s.add(
+            ProviderConfig(
+                name="mine",
+                provider_type="custom",
+                base_url="https://openrouter.ai/api/v1",
+                source="user",
+            )
+        )
+        await s.commit()
+        await bootstrap.bootstrap_providers(s)
+    async with async_session() as s:
+        row = (await s.execute(select(ProviderConfig))).scalar_one()
+    assert (row.provider_type, row.base_url) == ("openrouter", None)
+    llm = create_llm(LLMConfig(provider="openrouter", model="x/y:free", api_key="k"))
+    assert str(llm.openai_api_base) == "https://openrouter.ai/api/v1"

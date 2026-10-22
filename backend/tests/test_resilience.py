@@ -69,7 +69,7 @@ def test_create_llm_wires_rate_limit_retries_and_method():
         ("openai", "gpt-10", False),
         ("openai", "o3-mini", False),
         ("openai", "o5", False),
-        ("custom", "openai/gpt-6-luna", False),  # router name
+        ("openrouter", "openai/gpt-6-luna", False),  # router name
         ("custom", "meta-llama/llama-3.3-70b-instruct:free", True),
         ("ollama", "qwen3:8b", True),
     ],

@@ -347,13 +347,15 @@ async def estimate_cost(
         if not provider:
             raise HTTPException(404, "Provider not found")
         price = price_for(provider.provider_type, model, prices)
-        if price is None and provider.provider_type == "custom":
+        if price is None and provider.provider_type in ("custom", "openrouter"):
             # OpenAI-compatible routers (OpenRouter) publish prices in their model list
             api_key = (
                 decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
             )
             try:
-                listed = await list_models("custom", api_key, provider.base_url, prices)
+                listed = await list_models(
+                    provider.provider_type, api_key, provider.base_url, prices
+                )
             except Exception:
                 listed = []
             option = next((m for m in listed if m["id"] == model), None)
@@ -369,9 +371,10 @@ async def estimate_cost(
         single = PriceTable({model: price}, prices.fetched_at, prices.source)
         return estimate(profile, single, language, {price.provider: [model]})
 
-    # Models from config.yaml (pricing.models) plus the defaults of configured providers
-    models = {p: list(names) for p, names in DEFAULT_MODELS.items()}
-    models.update((load_config().get("pricing") or {}).get("models") or {})
+    # config.yaml pricing.models (it replaces the built-in list, so it can drop a vendor),
+    # plus the default models of configured providers
+    configured = (load_config().get("pricing") or {}).get("models")
+    models = {p: list(names) for p, names in (configured or DEFAULT_MODELS).items()}
     providers = await db.execute(select(ProviderConfig).where(ProviderConfig.is_active.is_(True)))
     for provider in providers.scalars():
         if provider.provider_type in models and provider.default_model:
