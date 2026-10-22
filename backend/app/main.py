@@ -22,6 +22,7 @@ app.include_router(ws_router)
 
 @app.on_event("startup")
 async def startup():
+    settings.ensure_dirs()
     await init_db()
 
 

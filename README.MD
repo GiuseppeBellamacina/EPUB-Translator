@@ -27,28 +27,18 @@ Intelligent EPUB translation tool with a modern React UI and an agentic translat
 
 ## Quick Start
 
-### Development (local)
+Only Docker is required on the host: development, tests and linting all run in containers.
 
-**Backend:**
-
-```bash
-cd backend
-uv sync
-cp .env.example .env    # Edit with your encryption key
-uv run uvicorn app.main:app --reload --port 8000
-```
-
-**Frontend:**
+### Development
 
 ```bash
-cd frontend
-bun install
-bun run dev
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-Open http://localhost:3000
+Backend with hot reload at http://localhost:8000, Vite frontend at http://localhost:3000.
+All data (uploads, translated files, SQLite DB) lives in the repo-root `data/` folder.
 
-### Docker
+### Production
 
 ```bash
 docker compose up --build

@@ -1,15 +1,17 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: prod
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - ./data:/data
+      - ./config.yaml:/config/config.yaml:ro
+      # Mounted as a file (not env_file) because keys like OPENAI-API-KEY are not valid env names
+      - ./.env:/run/secrets/app.env:ro
     environment:
-      - EPUB_DATA_DIR=/app/data
-      - EPUB_UPLOADS_DIR=/app/data/uploads
-      - EPUB_TRANSLATED_DIR=/app/data/translated
-      - EPUB_DB_PATH=/app/data/epub_translator.db
+      - EPUB_ENV_FILE=/run/secrets/app.env
       - EPUB_ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-secret}
     restart: unless-stopped
 
@@ -20,6 +22,3 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  data:

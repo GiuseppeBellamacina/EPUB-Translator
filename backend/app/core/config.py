@@ -1,17 +1,16 @@
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="EPUB_", extra="ignore")
+
     app_name: str = "EPUB Translator"
     debug: bool = False
 
-    # Paths
-    data_dir: Path = Path("data")
-    uploads_dir: Path = Path("data/uploads")
-    translated_dir: Path = Path("data/translated")
-    db_path: Path = Path("data/epub_translator.db")
+    # Single data directory (repo-root data/ mounted at /data in the containers)
+    data_dir: Path = Path("/data")
 
     # Encryption key for API keys stored in DB
     encryption_key: str = ""
@@ -19,13 +18,21 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "EPUB_"
+    @property
+    def uploads_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
+    def translated_dir(self) -> Path:
+        return self.data_dir / "translated"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "epub_translator.db"
+
+    def ensure_dirs(self) -> None:
+        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self.translated_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()
-
-# Ensure directories exist
-settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-settings.translated_dir.mkdir(parents=True, exist_ok=True)
