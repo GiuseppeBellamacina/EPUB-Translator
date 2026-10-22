@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Everything runs in Docker — do not install or run Python/Bun tooling on the host. Use the dev override:
+Everything runs in Docker — do not install or run Python/Bun tooling on the host. `./run.ps1 start|stop [-Prod]` starts/stops the stack (dev by default) and waits for health. Directly, use the dev override:
 
 ```bash
 DC="docker compose -f docker-compose.yml -f docker-compose.dev.yml"

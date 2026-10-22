@@ -33,6 +33,18 @@ Intelligent EPUB and PDF translation tool with a modern React UI and an agentic 
 
 Only Docker is required on the host: development, tests and linting all run in containers.
 
+### Start / stop (PowerShell)
+
+```powershell
+./run.ps1 start          # development: hot reload
+./run.ps1 start -Prod    # production images
+./run.ps1 stop           # (add -Prod if started with -Prod)
+```
+
+The script checks that Docker is running and `.env` exists, builds, starts in the
+background and waits until both services answer. The plain compose commands below do
+the same.
+
 ### Development
 
 ```bash
