@@ -60,6 +60,27 @@ def test_create_llm_wires_rate_limit_retries_and_method():
 
 
 @pytest.mark.parametrize(
+    "provider, model, temperature",
+    [
+        ("openai", "gpt-4.1-nano", True),
+        ("openai", "gpt-4o-mini", True),
+        ("openai", "gpt-5-mini", False),
+        ("openai", "gpt-6-luna", False),  # newer families must not need a code change
+        ("openai", "gpt-10", False),
+        ("openai", "o3-mini", False),
+        ("openai", "o5", False),
+        ("custom", "openai/gpt-6-luna", False),  # router name
+        ("custom", "meta-llama/llama-3.3-70b-instruct:free", True),
+        ("ollama", "qwen3:8b", True),
+    ],
+)
+def test_openai_reasoning_models_get_no_temperature(provider, model, temperature):
+    from app.core.llm_factory import accepts_temperature
+
+    assert accepts_temperature(provider, model) is temperature
+
+
+@pytest.mark.parametrize(
     "model, temperature, thinks",
     [
         ("claude-haiku-4-5", True, False),
