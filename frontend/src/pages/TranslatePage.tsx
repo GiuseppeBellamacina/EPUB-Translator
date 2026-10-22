@@ -11,6 +11,7 @@ import {
   Cpu,
   Languages,
   Activity,
+  RotateCcw,
 } from "lucide-react";
 import {
   api,
@@ -71,8 +72,24 @@ export function TranslatePage() {
     });
   }, [bookId]);
 
-  const handleStart = () => {
+  // Refresh status/progress from the server when a run ends (completed, paused, failed)
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    if (wasConnected.current && !isConnected && bookId) {
+      api.getBook(parseInt(bookId)).then(setBook);
+    }
+    wasConnected.current = isConnected;
+  }, [isConnected, bookId]);
+
+  const handleStart = (restart = false) => {
     if (!bookId || !selectedProvider) return;
+    if (
+      restart &&
+      !window.confirm(
+        "Discard all saved progress and translate the book from scratch?",
+      )
+    )
+      return;
     startTranslation({
       bookId: parseInt(bookId),
       providerId: selectedProvider,
@@ -80,6 +97,7 @@ export function TranslatePage() {
       targetLanguage: targetLang,
       model: model || undefined,
       styleInstructions: styleInstructions || undefined,
+      restart,
     });
   };
 
@@ -95,10 +113,25 @@ export function TranslatePage() {
 
   const isRunning = isConnected;
   const isCompleted =
-    book.status === "completed" || logs.some((l) => l.event === "job_complete");
-  const chapterPct = progress?.total_chapters
-    ? ((progress.chapter_index || 0) / progress.total_chapters) * 100
+    book.status === "completed" ||
+    logs.some(
+      (l) =>
+        l.event === "job_complete" &&
+        !((l.data?.failed_units as unknown[] | undefined) ?? []).length,
+    );
+  // Chapters run concurrently: progress is the count of finished chapters
+  const finishedChapters = logs.length
+    ? logs.filter(
+        (l) => l.event === "chapter_saved" || l.event === "chapter_skipped",
+      ).length
+    : book.translated_chapters;
+  const chapterPct = book.total_chapters
+    ? (finishedChapters / book.total_chapters) * 100
     : 0;
+  const canResume =
+    !isCompleted &&
+    (["paused", "failed", "translating"].includes(book.status) ||
+      book.translated_chapters > 0);
 
   return (
     <div className="h-full flex flex-col">
@@ -260,14 +293,29 @@ export function TranslatePage() {
             {/* Start/Stop button */}
             <div className="pt-2">
               {!isRunning ? (
-                <button
-                  onClick={handleStart}
-                  disabled={!selectedProvider || isCompleted}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Play className="w-4 h-4" />
-                  {isCompleted ? "Translation completed" : "Start translation"}
-                </button>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleStart(false)}
+                    disabled={!selectedProvider || isCompleted}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Play className="w-4 h-4" />
+                    {isCompleted
+                      ? "Translation completed"
+                      : canResume
+                        ? `Resume translation (${book.translated_chapters}/${book.total_chapters})`
+                        : "Start translation"}
+                  </button>
+                  {(canResume || isCompleted) && (
+                    <button
+                      onClick={() => handleStart(true)}
+                      disabled={!selectedProvider}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-50"
+                    >
+                      <RotateCcw className="w-4 h-4" /> Start over from scratch
+                    </button>
+                  )}
+                </div>
               ) : (
                 <button
                   onClick={stopTranslation}
@@ -287,8 +335,7 @@ export function TranslatePage() {
             <div className="mb-6 rounded-lg surface p-4 animate-fade-in-up">
               <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300 mb-3">
                 <span className="font-medium">
-                  Chapter {(progress.chapter_index || 0) + 1} /{" "}
-                  {progress.total_chapters || book.total_chapters}
+                  {finishedChapters} / {book.total_chapters} chapters done
                 </span>
                 {progress.total_chunks > 0 && (
                   <span className="text-gray-400">

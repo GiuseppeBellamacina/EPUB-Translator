@@ -2,7 +2,7 @@ from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationPipeline
 from app.core.fake_llm import _extract_source_text, meow_transform
 from app.models.schemas import GlossaryItem, ReviewResult, TranslationResult
-from app.services.epub_service import EpubService
+from tests.conftest import translate
 
 
 def item(source, target="", dnt=False):
@@ -48,16 +48,14 @@ def test_enforce_replaces_untranslated_terms_with_case_and_skips_unsafe_ones():
 
 async def test_terms_learned_in_one_chapter_reach_the_next(llm, sample_epub):
     # Chapter 1 proposes "Mara"; later prompts must list it in the glossary.
-    def translate(prompt, n):
+    def handler(prompt, n):
         source = _extract_source_text(prompt)
         terms = [item("Mara", dnt=True)] if "Mara" in source and n == 1 else []
         return TranslationResult(translated_text=meow_transform(source), new_terms=terms)
 
-    llm.handlers[TranslationResult] = translate
+    llm.handlers[TranslationResult] = handler
     pipeline = TranslationPipeline(llm=llm, enable_review=False)
-    events = [
-        e async for e in EpubService.translate_book(EpubService.load_book(sample_epub), pipeline)
-    ]
+    events = [e for e in await translate(sample_epub, pipeline)]
 
     assert [
         e.data["new_terms"][0]["source_term"] for e in events if e.event_type == "glossary_update"
@@ -71,7 +69,7 @@ async def test_rejection_feedback_reaches_the_retranslation(llm, sample_epub):
         approved=n > 1, issues=["Wrong tense"], glossary_violations=["Mara"]
     )
     pipeline = TranslationPipeline(llm=llm, max_retries=1)
-    [e async for e in EpubService.translate_book(EpubService.load_book(sample_epub), pipeline)]
+    await translate(sample_epub, pipeline)
 
     first, retry = llm.calls_for(TranslationResult)[:2]
     assert "REVIEWER REJECTED" not in first
@@ -80,5 +78,5 @@ async def test_rejection_feedback_reaches_the_retranslation(llm, sample_epub):
 
 async def test_review_can_be_disabled(llm, sample_epub):
     pipeline = TranslationPipeline(llm=llm, enable_review=False)
-    [e async for e in EpubService.translate_book(EpubService.load_book(sample_epub), pipeline)]
+    await translate(sample_epub, pipeline)
     assert llm.calls_for(ReviewResult) == []

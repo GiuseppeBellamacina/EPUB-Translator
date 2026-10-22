@@ -86,6 +86,16 @@ class ScriptedLLM(FakeChatModel):
         return RunnableLambda(_invoke, afunc=_ainvoke)
 
 
+async def translate(path: Path, pipeline, output: Path | None = None, **kwargs) -> list:
+    """Run translate_document on a file and return all events."""
+    from app.services.documents import open_document
+    from app.services.translation_service import translate_document
+
+    output = output or path.with_name("out" + path.suffix)
+    doc = open_document(path)
+    return [e async for e in translate_document(doc, pipeline, output, **kwargs)]
+
+
 @pytest.fixture
 def llm() -> ScriptedLLM:
     return ScriptedLLM()

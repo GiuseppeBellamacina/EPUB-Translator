@@ -6,6 +6,7 @@ from app.api.websocket import ws_router
 from app.core.bootstrap import bootstrap_providers, load_config
 from app.core.config import settings
 from app.db.database import async_session, init_db
+from app.services.job_store import recover_interrupted_jobs
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
 
@@ -26,6 +27,7 @@ async def startup():
     settings.ensure_dirs()
     settings.apply_overrides(load_config().get("translation") or {})
     await init_db()
+    await recover_interrupted_jobs()
     async with async_session() as db:
         await bootstrap_providers(db)
 
