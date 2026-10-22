@@ -1,17 +1,16 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Upload,
-  FileText,
-  AlertCircle,
-  Languages,
-  ShieldCheck,
-  ArrowRight,
-  BookOpen,
-} from "lucide-react";
+import { AlertCircle, ArrowRight, FileText, Languages, ShieldCheck, Upload } from "lucide-react";
 import { api, type Book } from "../lib/api";
 import { cn } from "../lib/utils";
 import { CostEstimate } from "../components/CostEstimate";
+import { Button, Card, Page } from "../components/ui";
+
+const STEPS = [
+  { icon: FileText, label: "Analyze", desc: "Context and glossary" },
+  { icon: Languages, label: "Translate", desc: "Consistent terminology" },
+  { icon: ShieldCheck, label: "Review", desc: "Quality control" },
+];
 
 export function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
@@ -20,170 +19,110 @@ export function UploadPage() {
   const [uploaded, setUploaded] = useState<Book | null>(null);
   const navigate = useNavigate();
 
-  const handleFile = useCallback(
-    async (file: File) => {
-      if (!/\.(epub|pdf)$/i.test(file.name)) {
-        setError("Only .epub and .pdf files are supported");
-        return;
-      }
-
-      setError(null);
-      setUploading(true);
-
-      try {
-        setUploaded(await api.uploadBook(file));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Upload failed");
-      } finally {
-        setUploading(false);
-      }
-    },
-    [],
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
-    },
-    [handleFile],
-  );
-
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) handleFile(file);
-    },
-    [handleFile],
-  );
+  const handleFile = useCallback(async (file: File) => {
+    if (!/\.(epub|pdf)$/i.test(file.name)) {
+      setError("Only .epub and .pdf files are supported");
+      return;
+    }
+    setError(null);
+    setUploading(true);
+    try {
+      setUploaded(await api.uploadBook(file));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
 
   if (uploaded) {
     const isPdf = uploaded.filename.toLowerCase().endsWith(".pdf");
     return (
-      <div className="h-full overflow-auto p-8">
-        <div className="max-w-2xl mx-auto w-full space-y-6 animate-fade-in-up">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-md bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-              <BookOpen className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
-                {uploaded.filename}
-              </h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {uploaded.total_chapters} {isPdf ? "pages" : "chapters"} uploaded
-              </p>
-            </div>
-          </div>
-
+      <Page
+        eyebrow={`${isPdf ? "PDF" : "EPUB"} · ${uploaded.total_chapters} ${isPdf ? "pages" : "chapters"} uploaded`}
+        title={uploaded.filename.replace(/\.(epub|pdf)$/i, "")}
+        actions={
+          <>
+            <Button onClick={() => setUploaded(null)}>Upload another</Button>
+            <Button variant="primary" onClick={() => navigate(`/translate/${uploaded.id}`)}>
+              Continue to translation <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </>
+        }
+      >
+        <Card className="p-6">
           <CostEstimate bookId={uploaded.id} />
-
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => setUploaded(null)}
-              className="px-4 py-2 rounded-md border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-            >
-              Upload another
-            </button>
-            <button
-              onClick={() => navigate(`/translate/${uploaded.id}`)}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
-            >
-              Continue to translation <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
+        </Card>
+      </Page>
     );
   }
 
   return (
-    <div className="h-full flex items-center justify-center p-8">
-      <div className="max-w-lg w-full animate-fade-in-up">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-semibold mb-2 tracking-tight text-gray-900 dark:text-gray-100">
-            Translate an EPUB or PDF
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Upload your EPUB or PDF file to start an intelligent translation with
-            consistent terminology
-          </p>
-        </div>
-
-        {/* Drop zone */}
-        <label
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-          className={cn(
-            "group flex flex-col items-center justify-center w-full h-60 border border-dashed rounded-lg cursor-pointer transition-colors duration-200",
-            isDragging
-              ? "border-gray-900 dark:border-gray-100 bg-gray-50 dark:bg-gray-900"
-              : "border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0a0a0a] hover:border-gray-400 dark:hover:border-gray-600",
-            uploading && "opacity-50 pointer-events-none",
-          )}
-        >
-          <div className="flex flex-col items-center justify-center pt-5 pb-6">
-            {uploading ? (
-              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-gray-900 dark:border-gray-100" />
-            ) : (
-              <>
-                <div className="w-12 h-12 rounded-lg bg-gray-900 dark:bg-white flex items-center justify-center mb-4">
-                  <Upload className="w-6 h-6 text-white dark:text-gray-900" />
-                </div>
-                <p className="mb-1 text-sm text-gray-600 dark:text-gray-300">
-                  <span className="font-semibold text-gray-900 dark:text-gray-100">
-                    Click to upload
-                  </span>{" "}
-                  or drag and drop
-                </p>
-                <p className="text-xs text-gray-400">EPUB or PDF — the output keeps the same format and layout</p>
-              </>
-            )}
-          </div>
-          <input
-            type="file"
-            className="hidden"
-            accept=".epub,.pdf"
-            onChange={handleInputChange}
-            disabled={uploading}
-          />
-        </label>
-
-        {/* Error */}
-        {error && (
-          <div className="mt-4 flex items-center gap-2 p-3 bg-red-50/80 dark:bg-red-900/20 border border-red-200/60 dark:border-red-900/30 rounded-xl text-red-700 dark:text-red-300 text-sm">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            {error}
-          </div>
+    <Page
+      title="Translate a book"
+      description="Upload an EPUB or PDF. The translation keeps the same format and layout; only the language changes."
+    >
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          const file = e.dataTransfer.files[0];
+          if (file) handleFile(file);
+        }}
+        className={cn(
+          "flex h-64 w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-md border border-dashed bg-surface transition-colors",
+          isDragging ? "border-accent bg-accent-soft" : "border-line-strong hover:border-ink",
+          uploading && "pointer-events-none opacity-60",
         )}
+      >
+        {uploading ? (
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-line border-t-ink" aria-label="Uploading" />
+        ) : (
+          <>
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-ink text-on-ink">
+              <Upload className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <span className="text-sm text-muted">
+              <span className="font-semibold text-ink">Click to upload</span> or drag and drop
+            </span>
+            <span className="text-xs text-faint">.epub or .pdf</span>
+          </>
+        )}
+        <input
+          type="file"
+          className="sr-only"
+          accept=".epub,.pdf"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleFile(file);
+          }}
+          disabled={uploading}
+        />
+      </label>
 
-        {/* Info */}
-        <div className="mt-8 grid grid-cols-3 gap-3 text-center">
-          {[
-            { icon: FileText, label: "Analyze", desc: "Context & glossary" },
-            { icon: Languages, label: "Translate", desc: "With consistency" },
-            {
-              icon: ShieldCheck,
-              label: "Review",
-              desc: "Quality control",
-            },
-          ].map(({ icon: Icon, label, desc }) => (
-            <div key={label} className="p-4 surface rounded-lg">
-              <Icon className="w-4 h-4 text-gray-500 dark:text-gray-400 mx-auto mb-2" />
-              <p className="font-semibold text-gray-900 dark:text-gray-100 text-sm">
-                {label}
-              </p>
-              <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-            </div>
-          ))}
+      {error && (
+        <div role="alert" className="flex items-center gap-2 rounded-md bg-danger-soft p-3 text-sm text-danger">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {error}
         </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {STEPS.map(({ icon: Icon, label, desc }) => (
+          <Card key={label} className="flex items-center gap-3 p-4">
+            <Icon className="h-5 w-5 text-accent" aria-hidden="true" />
+            <div>
+              <div className="font-serif text-lg font-medium">{label}</div>
+              <div className="text-xs text-muted">{desc}</div>
+            </div>
+          </Card>
+        ))}
       </div>
-    </div>
+    </Page>
   );
 }

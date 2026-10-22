@@ -37,6 +37,17 @@ export const api = {
     }),
   deleteProvider: (id: number) =>
     request("/providers/" + id, { method: "DELETE" }),
+  updateProvider: (id: number, data: Partial<ProviderCreate>) =>
+    request<Provider>("/providers/" + id, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  /** Models of a provider that is not saved yet; fails on a bad key/URL. */
+  listModelsFor: (data: { provider_type: string; api_key?: string; base_url?: string }) =>
+    request<ModelOption[]>("/providers/models", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   testProvider: (data: TestConnection) =>
     request<{ success: boolean; response?: string; error?: string }>(
       "/providers/test",
@@ -76,6 +87,7 @@ export const api = {
     request<ModelOption[]>(
       `/providers/${providerId}/models${refresh ? "?refresh=true" : ""}`,
     ),
+  getProgress: (bookId: number) => request<BookProgress>(`/books/${bookId}/progress`),
 
   // Glossary
   getGlossary: (bookId: number) =>
@@ -207,4 +219,30 @@ export interface ModelOption {
   input_per_million: number | null;
   output_per_million: number | null;
   reasoning: boolean | null;
+}
+
+/** A message sent by the translation WebSocket (also kept server-side for /progress). */
+export interface JobEvent {
+  event: string;
+  chapter_index?: number;
+  total_chapters?: number;
+  chunk_index?: number;
+  total_chunks?: number;
+  message?: string;
+  data?: Record<string, unknown>;
+  /** server time, seconds since epoch */
+  ts?: number;
+}
+
+export interface BookProgress {
+  status: string;
+  running: boolean;
+  total_units: number;
+  completed_units: number;
+  failed_units: number[];
+  in_flight: number[];
+  started_at: string | null;
+  eta_seconds: number | null;
+  /** newest first */
+  recent_events: JobEvent[];
 }

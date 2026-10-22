@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Brain, Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { api, type CostEstimate as Estimate } from "../lib/api";
 import { cn } from "../lib/utils";
-
-const PROVIDER_LABEL = { openai: "OpenAI", anthropic: "Claude" } as const;
+import { ProviderLogo } from "./ProviderLogo";
 
 const SOURCE_LABEL: Record<Estimate["prices_source"], string> = {
   live: "just updated",
@@ -49,13 +48,11 @@ export function CostEstimate({ bookId }: { bookId: number }) {
     fetchEstimate(true).finally(() => setRefreshing(false));
   };
 
-  if (error) {
-    return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
-  }
+  if (error) return <p className="m-0 text-sm text-danger">{error}</p>;
   if (!estimate) {
     return (
-      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <Loader2 className="w-4 h-4 animate-spin" /> Estimating translation cost…
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Estimating translation cost…
       </div>
     );
   }
@@ -64,27 +61,22 @@ export function CostEstimate({ bookId }: { bookId: number }) {
   const updated = new Date(estimate.prices_fetched_at * 1000).toLocaleString();
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          Estimated cost
-        </h3>
-        <div
-          role="radiogroup"
-          aria-label="Review step"
-          className="flex rounded-md border border-gray-300 dark:border-gray-700 text-xs overflow-hidden"
-        >
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="m-0 font-serif text-[22px] font-medium">Estimated cost</h2>
+        <div role="radiogroup" aria-label="Review step" className="flex gap-1.5">
           {[true, false].map((value) => (
             <button
               key={String(value)}
+              type="button"
               role="radio"
               aria-checked={withReview === value}
               onClick={() => setWithReview(value)}
               className={cn(
-                "px-2.5 py-1 transition-colors",
+                "h-8 rounded-full border px-3.5 text-[13px] transition-colors",
                 withReview === value
-                  ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                  : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900",
+                  ? "border-ink bg-ink text-on-ink"
+                  : "border-line-strong bg-surface text-ink hover:bg-tint",
               )}
             >
               {value ? "With review" : "No review"}
@@ -93,48 +85,45 @@ export function CostEstimate({ bookId }: { bookId: number }) {
         </div>
       </div>
 
-      <p className="text-xs text-gray-500 dark:text-gray-400">
-        {profile.units} {profile.units === 1 ? "unit" : "units"} · {profile.chunks} chunks ·{" "}
-        ~{formatTokens(profile.source_tokens)} source tokens · to{" "}
+      <p className="m-0 text-[13px] text-muted">
+        {profile.units} {profile.units === 1 ? "unit" : "units"} · {profile.chunks} chunks · ~
+        {formatTokens(profile.source_tokens)} source tokens · to{" "}
         <span className="capitalize">{estimate.target_language}</span>
       </p>
 
-      <div className="surface rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-md border border-line bg-surface">
+        <table className="w-full min-w-120 text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
-              <th className="px-3 py-2 font-medium">Model</th>
-              <th className="px-3 py-2 font-medium text-right">$ / 1M in · out</th>
-              <th className="px-3 py-2 font-medium text-right">Cost</th>
+            <tr className="border-b border-line text-left text-xs text-faint">
+              <th className="px-4 py-2.5 font-medium">Model</th>
+              <th className="px-4 py-2.5 text-right font-medium">$ / 1M in · out</th>
+              <th className="px-4 py-2.5 text-right font-medium">Cost</th>
             </tr>
           </thead>
           <tbody>
             {estimate.models.map((m) => {
               const usage = withReview ? m.with_review : m.without_review;
               return (
-                <tr
-                  key={`${m.provider}/${m.model}`}
-                  className="border-b last:border-0 border-gray-100 dark:border-gray-900"
-                >
-                  <td className="px-3 py-2">
-                    <span className="text-xs text-gray-400 mr-1.5">
-                      {PROVIDER_LABEL[m.provider]}
+                <tr key={`${m.provider}/${m.model}`} className="border-b border-line last:border-0">
+                  <td className="px-4 py-2.5">
+                    <span className="flex items-center gap-2.5">
+                      <ProviderLogo providerType={m.provider} modelId={m.model} className="h-4 w-4" />
+                      <span className="font-mono text-[13px] text-ink">{m.model}</span>
+                      {m.reasoning && (
+                        <span
+                          title="Reasoning model: thinking tokens are billed as output (estimated)"
+                          className="rounded-full bg-violet-soft px-2 py-0.5 text-[11px] text-violet"
+                        >
+                          reasoning
+                        </span>
+                      )}
                     </span>
-                    <span className="font-mono text-gray-900 dark:text-gray-100">{m.model}</span>
-                    {m.reasoning && (
-                      <span
-                        title="Reasoning model: thinking tokens are billed as output (estimated)"
-                        className="inline-flex items-center ml-1.5 align-middle text-gray-400"
-                      >
-                        <Brain className="w-3.5 h-3.5" aria-label="reasoning model" />
-                      </span>
-                    )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-500 dark:text-gray-400">
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted">
                     {m.input_per_million.toFixed(2)} · {m.output_per_million.toFixed(2)}
                   </td>
                   <td
-                    className="px-3 py-2 text-right tabular-nums font-medium text-gray-900 dark:text-gray-100"
+                    className="px-4 py-2.5 text-right font-serif text-base tabular-nums text-ink"
                     title={`~${formatTokens(usage.input_tokens)} input · ~${formatTokens(usage.output_tokens)} output tokens`}
                   >
                     {formatCost(usage.cost)}
@@ -146,38 +135,39 @@ export function CostEstimate({ bookId }: { bookId: number }) {
         </table>
       </div>
 
-      <div className="flex items-start justify-between gap-3 text-[11px] text-gray-400">
-        <p>
-          Prices from LiteLLM&apos;s public list, {SOURCE_LABEL[estimate.prices_source]} (
-          {updated}). Estimates include prompts, glossary, retries and, for reasoning models,
-          thinking tokens; real costs may differ by ±30%.
+      <div className="flex items-start justify-between gap-3 text-xs text-faint">
+        <p className="m-0">
+          Prices from LiteLLM&apos;s public list, {SOURCE_LABEL[estimate.prices_source]} ({updated}).
+          Estimates include prompts, glossary, retries and, for reasoning models, thinking tokens;
+          real costs may differ by ±30%.
         </p>
         <button
+          type="button"
           onClick={refreshPrices}
           disabled={refreshing}
-          className="shrink-0 inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 hover:bg-tint hover:text-ink disabled:opacity-50"
           title="Download the latest prices"
         >
-          <RefreshCw className={cn("w-3 h-3", refreshing && "animate-spin")} /> Refresh
+          <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} aria-hidden="true" /> Refresh
         </button>
       </div>
     </div>
   );
 }
 
-/** One-line estimated cost of translating a book with the selected provider model. */
+/** Estimated cost of translating a book with the selected provider model. */
 export function ModelCost({
   bookId,
   providerId,
   model,
+  withReview,
 }: {
   bookId: number;
   providerId: number;
   model: string;
+  withReview?: boolean;
 }) {
-  const [result, setResult] = useState<{ key: string; estimate: Estimate | null } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{ key: string; estimate: Estimate | null } | null>(null);
   const key = `${providerId}/${model}`;
 
   useEffect(() => {
@@ -195,15 +185,9 @@ export function ModelCost({
     };
   }, [bookId, providerId, model, key]);
 
-  if (!model || result?.key !== key) return null;
+  if (!model || result?.key !== key) return <span className="text-faint">…</span>;
   const row = result.estimate?.models[0];
-  if (!row) {
-    return <p className="text-[11px] text-gray-400">Cost estimate unavailable for this model.</p>;
-  }
-  return (
-    <p className="text-xs text-gray-600 dark:text-gray-300">
-      Estimated cost: <span className="font-medium">{formatCost(row.with_review.cost)}</span>{" "}
-      with review · {formatCost(row.without_review.cost)} without
-    </p>
-  );
+  if (!row) return <span className="text-faint">n/a</span>;
+  const cost = withReview === false ? row.without_review.cost : row.with_review.cost;
+  return <span>{formatCost(cost)}</span>;
 }

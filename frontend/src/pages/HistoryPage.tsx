@@ -1,137 +1,88 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { BookOpen, Eye, Download, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { BookOpen, Download, Eye, Loader2 } from "lucide-react";
 import { api, type Book } from "../lib/api";
-import { cn } from "../lib/utils";
-
-const statusColors: Record<string, string> = {
-  uploaded: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
-  analyzing: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
-  translating: "bg-gray-900 text-white dark:bg-white dark:text-gray-900",
-  paused: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
-  completed:
-    "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600",
-  failed: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400",
-};
-
-const statusLabels: Record<string, string> = {
-  uploaded: "uploaded",
-  analyzing: "analyzing",
-  translating: "translating",
-  paused: "paused",
-  completed: "completed",
-  failed: "failed",
-};
+import { buttonClass } from "../lib/styles";
+import { Card, Page, StatusPill } from "../components/ui";
 
 export function HistoryPage() {
-  const [books, setBooks] = useState<Book[]>([]);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+  const [books, setBooks] = useState<Book[] | null>(null);
 
   useEffect(() => {
-    api
-      .getBooks()
-      .then(setBooks)
-      .finally(() => setLoading(false));
+    api.getBooks().then(setBooks);
   }, []);
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-500 dark:text-slate-400" />
-      </div>
-    );
-  }
-
   return (
-    <div className="p-8 max-w-4xl mx-auto animate-fade-in-up">
-      <h1 className="text-xl font-semibold mb-6 tracking-tight text-gray-900 dark:text-gray-100">
-        Translation history
-      </h1>
-
-      {books.length === 0 ? (
-        <div className="text-center py-16 surface rounded-lg">
-          <BookOpen className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-          <p className="text-gray-500 dark:text-gray-400">
-            No translated books yet
-          </p>
-          <button
-            onClick={() => navigate("/")}
-            className="mt-4 px-5 py-2.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-md hover:bg-gray-800 dark:hover:bg-gray-100 text-sm font-medium transition-colors"
-          >
-            Upload your first EPUB
-          </button>
-        </div>
+    <Page title="Library" description="Every book you uploaded, with its translation status.">
+      {books === null ? (
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-faint" aria-label="Loading" />
+      ) : books.length === 0 ? (
+        <Card className="flex flex-col items-center gap-4 py-16 text-center">
+          <BookOpen className="h-8 w-8 text-faint" aria-hidden="true" />
+          <p className="m-0 text-muted">No books yet.</p>
+          <Link to="/" className={buttonClass("primary")}>
+            Upload your first book
+          </Link>
+        </Card>
       ) : (
-        <div className="space-y-3">
-          {books.map((book) => (
-            <div
-              key={book.id}
-              className="surface rounded-lg p-4 flex items-center justify-between hover:border-gray-300 dark:hover:border-gray-700 transition-colors"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-9 h-9 bg-gray-100 dark:bg-gray-900 rounded-md flex items-center justify-center">
-                  <BookOpen className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-gray-900 dark:text-white text-sm">
-                    {book.filename}
-                  </h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {book.total_chapters}{" "}
-                    {book.filename.toLowerCase().endsWith(".pdf") ? "pages" : "chapters"} ·{" "}
-                    {book.source_language} →{" "}
-                    {book.target_language}
-                    {" · "}
-                    {new Date(book.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span
-                  className={cn(
-                    "px-2.5 py-1 rounded-md text-xs font-medium",
-                    statusColors[book.status] || statusColors.uploaded,
-                  )}
-                >
-                  {statusLabels[book.status] || book.status}
-                </span>
-
-                <div className="flex gap-1">
-                  {book.status === "completed" && (
-                    <>
-                      <button
-                        onClick={() => navigate(`/preview/${book.id}`)}
-                        className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                        title="Preview"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                      <a
-                        href={api.downloadBook(book.id)}
-                        className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                        title="Download"
-                      >
-                        <Download className="w-4 h-4" />
-                      </a>
-                    </>
-                  )}
-                  {["uploaded", "paused", "failed"].includes(book.status) && (
-                    <button
-                      onClick={() => navigate(`/translate/${book.id}`)}
-                      className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                      title="Translate"
+        <ul className="m-0 flex list-none flex-col gap-3 p-0">
+          {books.map((book) => {
+            const isPdf = book.filename.toLowerCase().endsWith(".pdf");
+            const pct = book.total_chapters
+              ? Math.round((book.translated_chapters / book.total_chapters) * 100)
+              : 0;
+            return (
+              <li key={book.id}>
+                <Card className="flex flex-wrap items-center gap-4 p-5">
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      to={`/translate/${book.id}`}
+                      className="block truncate font-serif text-xl font-medium text-ink no-underline hover:underline"
                     >
-                      <BookOpen className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+                      {book.filename.replace(/\.(epub|pdf)$/i, "")}
+                    </Link>
+                    <div className="mt-1 text-[13px] text-muted">
+                      {isPdf ? "PDF" : "EPUB"} · {book.total_chapters} {isPdf ? "pages" : "chapters"} ·{" "}
+                      <span className="capitalize">{book.source_language}</span> →{" "}
+                      <span className="capitalize">{book.target_language}</span> ·{" "}
+                      {new Date(book.created_at).toLocaleDateString()}
+                    </div>
+                    {book.translated_chapters > 0 && book.status !== "completed" && (
+                      <div
+                        role="progressbar"
+                        aria-label="Translated"
+                        aria-valuenow={pct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="mt-3 h-1 max-w-xs overflow-hidden rounded-full bg-tint"
+                      >
+                        <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                  </div>
+                  <StatusPill status={book.status} />
+                  <div className="flex gap-2">
+                    {book.status === "completed" ? (
+                      <>
+                        <Link to={`/preview/${book.id}`} className={buttonClass("secondary", "sm")}>
+                          <Eye className="h-4 w-4" aria-hidden="true" /> Preview
+                        </Link>
+                        <a href={api.downloadBook(book.id)} className={buttonClass("primary", "sm")}>
+                          <Download className="h-4 w-4" aria-hidden="true" /> Download
+                        </a>
+                      </>
+                    ) : (
+                      <Link to={`/translate/${book.id}`} className={buttonClass("primary", "sm")}>
+                        {book.status === "uploaded" ? "Translate" : "Open"}
+                      </Link>
+                    )}
+                  </div>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
       )}
-    </div>
+    </Page>
   );
 }

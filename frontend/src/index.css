@@ -3,69 +3,89 @@
 /* Class-based dark mode (Tailwind v4) — toggled via `.dark` on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root {
-  --brand-accent: #111111;
+/*
+ * Design tokens. Utilities read the variables, so `.dark` only swaps values:
+ * bg-paper, bg-surface, bg-tint, text-ink, text-muted, text-faint, border-line,
+ * border-line-strong, text-accent, bg-accent-soft, text-warn, text-danger, ...
+ */
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-tint: var(--tint);
+  --color-ink: var(--ink);
+  --color-on-ink: var(--on-ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
 }
 
-html {
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+:root {
+  --paper: #fafaf7;
+  --surface: #ffffff;
+  --tint: #f4f2ec;
+  --ink: #1b2433;
+  --on-ink: #fafaf7;
+  --muted: #4a5568;
+  --faint: #5f6b7a;
+  --line: #e7e5df;
+  --line-strong: #cfcbc1;
+  --accent: #2f6b4f;
+  --accent-soft: #eaf1ec;
+  --warn: #a35a12;
+  --warn-soft: #fbf1e6;
+  --danger: #b42318;
+  --danger-soft: #fdeceb;
+  --violet: #5b3f87;
+  --violet-soft: #efe9f6;
+}
+
+.dark {
+  --paper: #12161d;
+  --surface: #1a1f28;
+  --tint: #232a35;
+  --ink: #ebe9e4;
+  --on-ink: #12161d;
+  --muted: #b8bdc6;
+  --faint: #9ea5b0;
+  --line: #2b313c;
+  --line-strong: #3d4552;
+  --accent: #7cc9a3;
+  --accent-soft: #1d3328;
+  --warn: #e6a862;
+  --warn-soft: #3a2a17;
+  --danger: #f08a80;
+  --danger-soft: #3b1d1b;
+  --violet: #c4b2e6;
+  --violet-soft: #2c2440;
 }
 
 body {
   margin: 0;
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   min-height: 100vh;
-  color: #1a1a1a;
-  background: #ffffff;
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+  color: var(--ink);
+  background: var(--paper);
 }
 
-.dark body {
-  color: #ededed;
-  background: #0a0a0a;
-}
-
-/* Refined custom scrollbars */
+/* Thin, quiet scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(140, 140, 140, 0.35) transparent;
-}
-*::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
-}
-*::-webkit-scrollbar-thumb {
-  background-color: rgba(140, 140, 140, 0.3);
-  border-radius: 9999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(140, 140, 140, 0.5);
-}
-
-@layer utilities {
-  /* Flat elevated surface for cards/panels */
-  .surface {
-    background: #ffffff;
-    border: 1px solid #e5e5e5;
-  }
-  .dark .surface {
-    background: #111111;
-    border: 1px solid #262626;
-  }
+  scrollbar-color: color-mix(in srgb, var(--faint) 45%, transparent) transparent;
 }
 
 @keyframes fade-in-up {
@@ -80,4 +100,9 @@ body {
 }
 .animate-fade-in-up {
   animation: fade-in-up 0.25s ease both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up {
+    animation: none;
+  }
 }
