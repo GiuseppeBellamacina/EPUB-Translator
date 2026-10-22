@@ -10,61 +10,16 @@ import {
   type Provider,
 } from "../lib/api";
 import { liveChunks } from "../lib/jobEvents";
-import { buttonClass, inputClass, labelClass } from "../lib/styles";
-import { cn } from "../lib/utils";
+import { settingsFrom, type RunSettings } from "../lib/runSettings";
+import { buttonClass } from "../lib/styles";
 import { useTranslationWs } from "../hooks/useTranslationWs";
 import { ActivityLog } from "../components/ActivityLog";
 import { ModelCost } from "../components/CostEstimate";
 import { GlossaryEditor } from "../components/GlossaryEditor";
 import { LiveView } from "../components/LiveView";
-import { ModelCombobox } from "../components/ModelCombobox";
 import { ProgressPanel } from "../components/ProgressPanel";
-import { ProviderSelect } from "../components/ProviderSelect";
+import { RunSettingsFields } from "../components/RunSettingsFields";
 import { Button, Card, Heading, Page, StatusPill } from "../components/ui";
-
-const LANGUAGES = [
-  "english", "italian", "spanish", "french", "german", "portuguese", "dutch",
-  "polish", "russian", "japanese", "chinese", "korean",
-]; // fmt: off
-
-// EPUB metadata often carries ISO codes ("en", "it-IT")
-const ISO: Record<string, string> = {
-  en: "english", it: "italian", es: "spanish", fr: "french", de: "german", pt: "portuguese",
-  nl: "dutch", pl: "polish", ru: "russian", ja: "japanese", zh: "chinese", ko: "korean",
-}; // fmt: off
-const languageName = (value: string | null | undefined, fallback: string) =>
-  value ? (ISO[value.toLowerCase().split(/[-_]/)[0]] ?? value.toLowerCase()) : fallback;
-
-function LanguageSelect({
-  label,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  disabled?: boolean;
-}) {
-  const options = LANGUAGES.includes(value) ? LANGUAGES : [value, ...LANGUAGES];
-  return (
-    <label className={labelClass}>
-      {label}
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className={cn(inputClass, "h-11 font-normal capitalize")}
-      >
-        {options.map((l) => (
-          <option key={l} value={l}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
 
 export function TranslatePage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -73,15 +28,10 @@ export function TranslatePage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
   const [progress, setProgress] = useState<BookProgress | null>(null);
-  const [providerId, setProviderId] = useState<number | null>(null);
-  const [model, setModel] = useState("");
-  const [enableReview, setEnableReview] = useState(true);
-  const [reviewModel, setReviewModel] = useState("");
-  const [sourceLang, setSourceLang] = useState("english");
-  const [targetLang, setTargetLang] = useState("italian");
-  const [style, setStyle] = useState("");
+  const [settings, setSettings] = useState<RunSettings>(() => settingsFrom(null, []));
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [totalCost, setTotalCost] = useState<{ with: number; without: number } | null>(null);
+  const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style } = settings;
 
   const refresh = useCallback(() => {
     api.getBook(id).then(setBook);
@@ -103,14 +53,7 @@ export function TranslatePage() {
         setProgress(prog);
         setEvents(prog.recent_events); // the recent log survives a page reload
         // The last run's settings, so a running or paused job shows (and resumes with) its own
-        const config = prog.config && p.some((x) => x.id === prog.config?.provider_id) ? prog.config : null;
-        setProviderId(config?.provider_id ?? p[0]?.id ?? null);
-        setModel(config?.model ?? "");
-        setEnableReview(config?.enable_review ?? true);
-        setReviewModel(config?.review_model ?? "");
-        setSourceLang(languageName(config?.source_language ?? b.source_language, "english"));
-        setTargetLang(languageName(config?.target_language ?? b.target_language, "italian"));
-        setStyle(config?.style_instructions ?? "");
+        setSettings(settingsFrom(prog.config, p, { source: b.source_language, target: b.target_language }));
         if (prog.running || prog.queue_status === "pending") watchTranslation(id);
       },
     );
@@ -152,12 +95,6 @@ export function TranslatePage() {
   }, [id, providerId, model]);
 
   const chunks = useMemo(() => liveChunks(events), [events]);
-  const provider = providers.find((p) => p.id === providerId) ?? null;
-  const loadModels = useCallback(
-    (refresh: boolean) =>
-      providerId === null ? Promise.resolve([]) : api.getProviderModels(providerId, refresh),
-    [providerId],
-  );
 
   if (!book) {
     return (
@@ -242,94 +179,12 @@ export function TranslatePage() {
         <Card aria-labelledby="config-title" className="flex w-full flex-col gap-5 p-5 lg:max-w-sm">
           <Heading id="config-title">Configuration</Heading>
 
-          {providers.length === 0 ? (
-            <p className="m-0 text-sm text-muted">
-              No providers yet. <Link to="/providers">Add one</Link> to start.
-            </p>
-          ) : (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Provider</span>
-                <ProviderSelect
-                  providers={providers}
-                  value={providerId}
-                  onChange={(pid) => {
-                    setProviderId(pid);
-                    setModel("");
-                    setReviewModel("");
-                  }}
-                  disabled={running}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Translation model</span>
-                <ModelCombobox
-                  key={`model-${providerId}`}
-                  label="Translation model"
-                  load={loadModels}
-                  loadKey={`model-${providerId}`}
-                  value={model}
-                  onChange={setModel}
-                  preferred={provider?.default_model}
-                  providerType={provider?.provider_type}
-                  baseUrl={provider?.base_url}
-                  disabled={running}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Reviewer</span>
-                  <label className="inline-flex items-center gap-2 text-sm text-muted">
-                    <input
-                      type="checkbox"
-                      checked={enableReview}
-                      onChange={(e) => setEnableReview(e.target.checked)}
-                      disabled={running}
-                      className="h-4.5 w-4.5 accent-accent"
-                    />
-                    Review each chunk
-                  </label>
-                </div>
-                {enableReview ? (
-                  <ModelCombobox
-                    key={`review-${providerId}`}
-                    label="Reviewer model"
-                    load={loadModels}
-                    loadKey={`review-${providerId}`}
-                    value={reviewModel}
-                    onChange={setReviewModel}
-                    autoSelect={false}
-                    emptyLabel={`Same as translation model${model ? ` (${model})` : ""}`}
-                    providerType={provider?.provider_type}
-                    baseUrl={provider?.base_url}
-                    hint="Flags major issues only; a stronger model than the translator works best"
-                    disabled={running}
-                  />
-                ) : (
-                  <p className="m-0 text-xs text-faint">Faster and cheaper; no second opinion on each chunk.</p>
-                )}
-              </div>
-            </>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <LanguageSelect label="From" value={sourceLang} onChange={setSourceLang} disabled={running} />
-            <LanguageSelect label="To" value={targetLang} onChange={setTargetLang} disabled={running} />
-          </div>
-
-          <label className={labelClass}>
-            Style
-            <textarea
-              rows={3}
-              value={style}
-              onChange={(e) => setStyle(e.target.value)}
-              placeholder="E.g. informal dialogue, keep honorifics"
-              disabled={running}
-              className={cn(inputClass, "resize-none py-2.5 font-normal")}
-            />
-          </label>
+          <RunSettingsFields
+            providers={providers}
+            value={settings}
+            onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+            disabled={running}
+          />
 
           <div className="flex items-center justify-between rounded-md bg-tint p-3.5">
             <div>
