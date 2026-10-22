@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
@@ -203,6 +203,26 @@ async def upload_book(file: UploadFile = File(...), db: AsyncSession = Depends(g
 async def list_books(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Book).order_by(Book.created_at.desc()))
     return result.scalars().all()
+
+
+@router.delete("/books/{book_id}")
+async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
+    """Remove a book with its progress, glossary, jobs, queue entries and files."""
+    book = await db.get(Book, book_id)
+    if not book:
+        raise HTTPException(404, "Book not found")
+    if book_id in active_jobs:
+        raise HTTPException(409, "Pause the translation before deleting the book")
+    for model in (Chapter, GlossaryEntry, TranslationJob, QueueItem):  # no ORM cascade in async
+        await db.execute(delete(model).where(model.book_id == book_id))
+    files = [Path(p) for p in (book.original_path, book.translated_path) if p]
+    await db.execute(delete(Book).where(Book.id == book_id))
+    await db.commit()
+    for path in files:
+        if path.resolve().is_relative_to(settings.data_dir.resolve()):  # only our own files
+            path.unlink(missing_ok=True)
+    recent_events.pop(book_id, None)
+    return {"status": "deleted"}
 
 
 @router.get("/books/{book_id}", response_model=BookDetailResponse)

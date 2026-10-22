@@ -109,3 +109,28 @@ def test_progress_keeps_the_recent_log_newest_first(client, sample_epub):
     logged = progress["recent_events"]
     assert logged[0]["event"] == "job_complete" and logged[-1]["event"] == "started"
     assert [e["ts"] for e in logged] == sorted((e["ts"] for e in logged), reverse=True)
+
+
+def test_delete_book_removes_rows_and_files(client, sample_epub):
+    import sqlite3
+    from pathlib import Path
+
+    from app.core.config import settings
+
+    provider, book = _upload(client, sample_epub)
+    _run(client, book["id"], provider["id"])
+    client.post(f"/api/glossary/{book['id']}/entry", json={"source_term": "A", "target_term": "B"})
+    with sqlite3.connect(settings.db_path) as conn:
+        paths = conn.execute(
+            "select original_path, translated_path from books where id = ?", (book["id"],)
+        ).fetchone()
+    assert all(Path(p).exists() for p in paths)
+
+    assert client.delete(f"/api/books/{book['id']}").json() == {"status": "deleted"}
+    assert client.get(f"/api/books/{book['id']}").status_code == 404
+    assert client.get(f"/api/glossary/{book['id']}").json() == []
+    assert not any(Path(p).exists() for p in paths)
+    with sqlite3.connect(settings.db_path) as conn:
+        for table in ("chapters", "translation_jobs", "queue_items"):
+            assert conn.execute(f"select count(*) from {table}").fetchone() == (0,)
+    assert client.delete(f"/api/books/{book['id']}").status_code == 404
