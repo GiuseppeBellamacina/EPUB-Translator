@@ -25,6 +25,10 @@ interface Props {
   /** Short context under the selected model (e.g. provider name). */
   hint?: string;
   disabled?: boolean;
+  /** Pick a model when the value is empty or not offered (default true). */
+  autoSelect?: boolean;
+  /** Shown when the value is empty and autoSelect is off (e.g. "Same as translation model"). */
+  emptyLabel?: string;
   onLoaded?: (models: ModelOption[]) => void;
   onError?: (message: string) => void;
 }
@@ -49,6 +53,8 @@ export function ModelCombobox({
   label,
   hint,
   disabled,
+  autoSelect = true,
+  emptyLabel,
   onLoaded,
   onError,
 }: Props) {
@@ -66,7 +72,7 @@ export function ModelCombobox({
         setModels(list);
         setError(null);
         onLoaded?.(list);
-        if (list.length && !list.some((m) => m.id === value)) {
+        if (autoSelect && list.length && !list.some((m) => m.id === value)) {
           onChange((list.find((m) => m.id === preferred) ?? list[0]).id);
         }
       })
@@ -115,12 +121,14 @@ export function ModelCombobox({
           <ComboboxInput
             aria-label={label}
             className={cn(
-              "h-[52px] w-full rounded-md border border-line-strong bg-surface pl-10 pr-20 text-sm text-ink",
+              "h-13 w-full rounded-md border border-line-strong bg-surface pl-10 pr-20 text-sm text-ink",
               "placeholder:text-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40",
               "disabled:opacity-60",
             )}
             displayValue={(id: string) => (models === null ? "" : (selected?.label ?? id))}
-            placeholder={models === null ? "Loading models…" : "Search or type a model id"}
+            placeholder={
+              models === null ? "Loading models…" : (emptyLabel ?? "Search or type a model id")
+            }
             onChange={(e) => setQuery(e.target.value)}
           />
           <span className="absolute inset-y-0 right-2 flex items-center gap-1">
@@ -147,7 +155,7 @@ export function ModelCombobox({
         <ComboboxOptions
           anchor="bottom start"
           className={cn(
-            "z-50 mt-1 max-h-80 w-[var(--input-width)] overflow-auto rounded-md border border-line bg-surface p-1.5",
+            "z-50 mt-1 max-h-80 w-(--input-width) overflow-auto rounded-md border border-line bg-surface p-1.5",
             "shadow-[0_16px_40px_rgba(27,36,51,0.14)] empty:invisible",
           )}
         >
