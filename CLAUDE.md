@@ -18,7 +18,15 @@ $DC run --rm frontend bun run lint                # frontend lint
 
 Production: `docker compose up --build` (backend `prod` target, nginx frontend).
 
-There is no test suite yet (pytest/pytest-asyncio are declared as dev deps only). To exercise the pipeline without a real LLM, add a provider of type `fake` in Settings: `app/core/fake_llm.py` returns deterministic "meow"-transformed translations and canned structured outputs.
+Tests (pytest, `asyncio_mode=auto`, no network by default):
+
+```bash
+$DC run --rm --no-deps backend pytest                                   # whole suite
+$DC run --rm --no-deps backend pytest tests/test_pipeline.py::test_name # single test
+$DC run --rm --no-deps backend pytest -m live                           # real-provider smoke tests (cost quota)
+```
+
+`tests/conftest.py` points `EPUB_DATA_DIR` to a temp dir before importing `app`, and provides `ScriptedLLM` (a `FakeChatModel` with per-schema `handlers`, `fail` error injection, `calls_for(schema)` and concurrency `peak`), a `sample_epub` fixture and a `db` fixture that recreates the schema. In the running app, a provider of type `fake` (`app/core/fake_llm.py`) gives deterministic "BAU … MIAO" translations without any API.
 
 ## Configuration
 

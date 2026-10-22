@@ -1,10 +1,12 @@
 """Generate a small sample EPUB (3 English chapters) for testing the pipeline.
 
-Run from the backend directory with the project venv active:
+Run inside the dev container:
 
-    python scripts/make_sample_epub.py
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm backend \
+        python scripts/make_sample_epub.py
 
-The file is written to ``sample_books/sample_en.epub``.
+The file is written to ``sample_books/sample_en.epub``. Tests import
+``write_sample_epub`` to build the same book in a temp directory.
 """
 
 from pathlib import Path
@@ -56,7 +58,7 @@ def build_chapter(index: int, title: str, paragraphs: list[str]) -> epub.EpubHtm
     return chapter
 
 
-def main() -> None:
+def write_sample_epub(out_path: Path) -> Path:
     book = epub.EpubBook()
     book.set_identifier("sample-en-bau-miao-001")
     book.set_title("The Lighthouse Keeper")
@@ -74,11 +76,14 @@ def main() -> None:
     book.add_item(epub.EpubNav())
     book.spine = ["nav", *chapters]
 
-    out_dir = Path(__file__).resolve().parent.parent / "sample_books"
-    out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / "sample_en.epub"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     epub.write_epub(str(out_path), book)
-    print(f"Wrote {out_path}")
+    return out_path
+
+
+def main() -> None:
+    out_path = Path(__file__).resolve().parent.parent / "sample_books" / "sample_en.epub"
+    print(f"Wrote {write_sample_epub(out_path)}")
 
 
 if __name__ == "__main__":
