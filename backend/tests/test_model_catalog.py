@@ -132,3 +132,19 @@ def test_models_endpoint_and_single_model_estimate(db, sample_epub):
         assert [m["model"] for m in one["models"]] == ["gpt-4.1-mini"]
         unknown = client.get(url, params={"provider_id": openai["id"], "model": "nope"}).json()
         assert unknown["models"] == []
+
+
+def test_list_models_for_an_unsaved_provider(db, monkeypatch):
+    from app.main import app
+
+    body = {"data": [{"id": "gpt-4.1-nano", "object": "model", "created": 0, "owned_by": "x"}]}
+    monkeypatch.setattr(
+        model_catalog,
+        "AsyncOpenAI",
+        lambda **kw: AsyncOpenAI(**kw, http_client=serve(lambda r: body)),
+    )
+    with TestClient(app) as client:
+        ok = client.post("/api/providers/models", json={"provider_type": "openai", "api_key": "sk"})
+        assert [m["id"] for m in ok.json()] == ["gpt-4.1-nano"]
+        bad = client.post("/api/providers/models", json={"provider_type": "nope"})
+        assert bad.status_code == 502 and "Could not list models" in bad.json()["detail"]
