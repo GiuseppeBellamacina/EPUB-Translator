@@ -3,6 +3,7 @@ import { Check, Loader2, Plus, Trash2 } from "lucide-react";
 import { api, type GlossaryEntry } from "../lib/api";
 import { inputClass } from "../lib/styles";
 import { cn } from "../lib/utils";
+import { Checkbox } from "./controls";
 import { Button } from "./ui";
 
 interface EditableEntry {
@@ -98,13 +99,11 @@ export function GlossaryEditor({ bookId, initial, disabled, onSaved }: GlossaryE
                     />
                   </td>
                   <td className="px-3 py-1.5">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={entry.do_not_translate}
-                      onChange={(e) => update(i, { do_not_translate: e.target.checked })}
-                      aria-label={`Keep term ${i + 1} unchanged`}
+                      onChange={(v) => update(i, { do_not_translate: v })}
+                      label={`Keep term ${i + 1} unchanged`}
                       disabled={disabled}
-                      className="h-4.5 w-4.5 accent-accent"
                     />
                   </td>
                   <td className="px-2 py-1.5 text-right">
