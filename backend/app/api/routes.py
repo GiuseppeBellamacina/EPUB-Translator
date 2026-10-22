@@ -18,6 +18,7 @@ from app.api.schemas import (
     GlossaryEntryResponse,
     GlossaryUpdate,
     ProviderCreate,
+    ProviderModelsRequest,
     ProviderResponse,
     TestConnectionRequest,
 )
@@ -88,6 +89,17 @@ async def provider_models(
         )
     except Exception as e:
         raise HTTPException(502, f"Could not list models from {provider.name}: {e}")
+
+
+@router.post("/providers/models")
+async def unsaved_provider_models(data: ProviderModelsRequest):
+    """Models of a provider that is not saved yet; a failure also means a bad key or URL."""
+    try:
+        return await list_models(
+            data.provider_type, data.api_key or None, data.base_url or None, await get_prices()
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Could not list models: {e}")
 
 
 @router.post("/providers/test")

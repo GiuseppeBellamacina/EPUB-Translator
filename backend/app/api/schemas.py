@@ -16,6 +16,12 @@ class ProviderCreate(BaseModel):
     params: dict | None = None
 
 
+class ProviderModelsRequest(BaseModel):
+    provider_type: str
+    api_key: str | None = None
+    base_url: str | None = None
+
+
 class ProviderResponse(BaseModel):
     id: int
     name: str
