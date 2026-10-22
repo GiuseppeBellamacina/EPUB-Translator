@@ -6,6 +6,9 @@ from app.main import app
 
 @pytest.fixture
 def client(db):
+    from app.api.websocket import recent_events
+
+    recent_events.clear()  # book ids restart with the fresh schema
     with TestClient(app) as c:
         yield c
 
@@ -73,3 +76,34 @@ def test_upload_translate_download(client, sample_epub):
     download = client.get(f"/api/books/{book['id']}/download")
     assert download.status_code == 200
     assert download.content[:2] == b"PK"
+
+
+def test_progress_without_a_job(client, sample_epub):
+    _, book = _upload(client, sample_epub)
+    progress = client.get(f"/api/books/{book['id']}/progress").json()
+    assert progress == {
+        "status": "uploaded",
+        "running": False,
+        "total_units": book["total_chapters"],
+        "completed_units": 0,
+        "failed_units": [],
+        "in_flight": [],
+        "started_at": None,
+        "eta_seconds": None,
+        "recent_events": [],
+    }
+    assert client.get("/api/books/999/progress").status_code == 404
+
+
+def test_progress_keeps_the_recent_log_newest_first(client, sample_epub):
+    provider, book = _upload(client, sample_epub)
+    events = _run(client, book["id"], provider["id"])
+    assert all("ts" in e for e in events)
+
+    progress = client.get(f"/api/books/{book['id']}/progress").json()
+    assert progress["status"] == "completed" and progress["running"] is False
+    assert progress["completed_units"] == book["total_chapters"]
+    assert progress["started_at"] is not None
+    logged = progress["recent_events"]
+    assert logged[0]["event"] == "job_complete" and logged[-1]["event"] == "started"
+    assert [e["ts"] for e in logged] == sorted((e["ts"] for e in logged), reverse=True)

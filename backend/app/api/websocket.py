@@ -12,6 +12,8 @@ Stop and disconnect pause the job, errors mark it failed — both are resumable.
 
 import asyncio
 import copy
+import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -31,6 +33,12 @@ ws_router = APIRouter()
 
 # Track active translation jobs for cancellation
 active_jobs: dict[int, TranslationPipeline] = {}
+
+# Per book: recent client messages (a page reload shows the latest log) and the
+# current run's start (time, units already done) for the ETA.
+# shortcut: in memory only, lost on restart; persist if the log must survive it.
+recent_events: dict[int, deque] = {}
+run_started: dict[int, tuple[float, int]] = {}
 
 # Bulky payloads persisted server-side but not sent to the client
 _SERVER_ONLY_KEYS = {"translated_html", "translations"}
@@ -116,7 +124,11 @@ async def translate_ws(websocket: WebSocket, book_id: int):
     status, output_path, error = BookStatus.failed, None, None
     final_message: dict | None = None
 
+    events = recent_events[book_id] = deque(maxlen=200)
+
     async def send(message: dict) -> None:
+        message = {**message, "ts": time.time()}
+        events.append(message)
         try:
             await websocket.send_json(message)
         except Exception:
@@ -136,6 +148,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
     try:
         resume = await store.prepare(doc.units, restart=bool(data.get("restart")))
         pipeline.set_glossary(resume.glossary)
+        run_started[book_id] = (time.time(), len(resume.completed))
         await store.start(
             provider.provider_type,
             llm_config.model,
@@ -185,6 +198,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
     finally:
         listener.cancel()
         active_jobs.pop(book_id, None)
+        run_started.pop(book_id, None)
         await store.finish(status, output_path, error)
 
     if final_message:
