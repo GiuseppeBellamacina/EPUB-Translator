@@ -20,6 +20,7 @@ Nodes emit progress via `get_stream_writer()` (custom stream mode), which the
 events for the WebSocket layer.
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
@@ -343,11 +344,13 @@ class TranslationPipeline:
         self.glossary = Glossary()
         self.book_summary: str = ""
         self._cancelled = False
+        self.cancelled = asyncio.Event()  # wakes a caller waiting on a slow model call
         self._graph = build_chapter_graph(llm, self.glossary, review_llm)
 
     def cancel(self):
         """Signal cancellation to stop processing."""
         self._cancelled = True
+        self.cancelled.set()
 
     def set_glossary(self, entries: list[GlossaryItem]):
         """Seed the glossary (e.g., from user edits or previous sessions)."""
