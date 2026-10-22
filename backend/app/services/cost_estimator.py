@@ -23,7 +23,11 @@ from app.agents.translator_agent import TRANSLATION_PROMPT
 from app.services.chunker import SmartChunker
 from app.services.documents import Document
 from app.services.pricing import ModelPrice, PriceTable
-from app.services.translation_service import analysis_text, lead_context_for
+from app.services.translation_service import (
+    analysis_text,
+    lead_context_for,
+    trail_context_for,
+)
 
 # Translations take more tokens than the English source (accents, longer words)
 EXPANSION = {"english": 1.0, "italian": 1.25, "spanish": 1.2, "french": 1.25, "german": 1.3}
@@ -81,6 +85,10 @@ def profile_document(doc: Document, chunker: SmartChunker) -> TokenProfile:
         context += sum(chunker.count_tokens(c.context_text) for c in unit_chunks if c.context_text)
         if unit_chunks and i > 0:  # first chunk gets the previous unit's tail as context
             context += chunker.count_tokens(lead_context_for(doc, i, chunker))
+        # every chunk also sees the text that follows it (next chunk's first block)
+        context += sum(c.blocks[0].token_count for c in unit_chunks[1:])
+        if unit_chunks:
+            context += chunker.count_tokens(trail_context_for(doc, i, chunker))
     analysis = chunker.count_tokens(analysis_text(doc))
     return TokenProfile(len(doc.units), chunks, source, context, analysis)
 

@@ -51,6 +51,14 @@ def lead_context_for(doc: Document, index: int, chunker: SmartChunker) -> str:
     return "\n\n".join(b.text for b in tail)
 
 
+def trail_context_for(doc: Document, index: int, chunker: SmartChunker) -> str:
+    """First block of the next unit: tells a page ending mid-sentence how it goes on."""
+    if index + 1 >= len(doc.units):
+        return ""
+    head = doc.blocks(index + 1, chunker)[:1]
+    return head[0].text if head else ""
+
+
 async def translate_document(
     doc: Document,
     pipeline: TranslationPipeline,
@@ -116,6 +124,7 @@ async def translate_document(
                     total,
                     previous.get(i),
                     lead_context=lead_context_for(doc, i, pipeline.chunker),
+                    trail_context=trail_context_for(doc, i, pipeline.chunker),
                 ):
                     if event.event_type == "chapter_done":
                         translations = event.data["translated_blocks"]

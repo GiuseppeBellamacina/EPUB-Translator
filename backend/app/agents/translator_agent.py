@@ -32,6 +32,9 @@ translated consistently later (characters, places, invented words, titles), with
 you used; source_term must be copied exactly as it appears in the text. Omit common words
 6. Maintain the same level of formality as the original
 7. Do not add explanations or notes in the translation itself
+8. The text may stop mid-sentence (it continues in the FOLLOWING TEXT, e.g. on the next \
+page): stop your translation at the same point, without completing the sentence or adding \
+closing quotation marks or punctuation
 
 {style_instructions}""",
         ),
@@ -44,6 +47,9 @@ CHAPTER CONTEXT: {chapter_summary}
 
 PREVIOUS CONTEXT (for continuity, do NOT translate this):
 {context}
+
+FOLLOWING TEXT (comes right after, do NOT translate this):
+{following}
 {feedback}
 ---
 
@@ -91,6 +97,8 @@ async def translate_chunk(
     target_language: str,
     style_instructions: str = "",
     feedback: str = "",
+    following: str = "",
+    attempts: int | None = None,
 ) -> TranslationResult:
     """
     Translate a text chunk with glossary awareness and context.
@@ -105,17 +113,21 @@ async def translate_chunk(
         target_language: Target language
         style_instructions: Optional free-form user instructions on tone/register/style
         feedback: Reviewer issues from a rejected previous attempt, to fix this time
+        following: Text right after the chunk (not translated), so sentences cut at a
+            page end are recognised as unfinished
+        attempts: Whole-call attempts (default: settings.chain_retries)
 
     Returns:
         TranslationResult with translated text and any new terms found
     """
-    chain = structured_chain(TRANSLATION_PROMPT, llm, TranslationResult)
+    chain = structured_chain(TRANSLATION_PROMPT, llm, TranslationResult, attempts)
 
     result = await chain.ainvoke(
         {
             "text": text,
             "paragraph_count": len(split_paragraphs(text)),
             "context": context or "(Start of chapter)",
+            "following": following or "(End of chapter)",
             "chapter_summary": chapter_summary or "No summary available",
             "glossary": _format_glossary(glossary),
             "style_instructions": _format_style(style_instructions),
@@ -141,29 +153,50 @@ def split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
 
+def keep_unfinished(source: str, translation: str) -> str:
+    """Drop a closing quote the model added to a quote left open in the source.
+
+    A sentence cut at a page end (``“Why do they want to kill``) continues on the next
+    page; models tend to close the quotation anyway, leaving a stray ``”``.
+    """
+    stripped = translation.rstrip()
+    if source.count("“") > source.count("”") and stripped.endswith("”"):
+        if translation.count("“") <= translation.count("”"):
+            return stripped[:-1].rstrip()
+    return translation
+
+
 async def translate_blocks(
     llm: BaseChatModel, blocks: list[str], attempts: int = 2, **kwargs
 ) -> tuple[list[str], list[GlossaryItem]]:
     """Translate blocks as one chunk, guaranteeing one translation per block.
 
     The chunk is retried when the model merges/splits paragraphs; if it still
-    does, each block is translated on its own so alignment can never drift.
-    ``kwargs`` are passed through to ``translate_chunk``.
+    does, or a call fails (e.g. a degenerate output hitting the token cap, which
+    an identical request would just repeat), each block is translated on its own
+    so alignment can never drift. ``kwargs`` are passed through to ``translate_chunk``.
     """
     if len(blocks) == 1:
         result = await translate_chunk(llm=llm, text=blocks[0], **kwargs)
-        return [" ".join(split_paragraphs(result.translated_text))], result.new_terms
+        translation = " ".join(split_paragraphs(result.translated_text))
+        return [keep_unfinished(blocks[0], translation)], result.new_terms
 
     for _ in range(attempts):
-        result = await translate_chunk(llm=llm, text="\n\n".join(blocks), **kwargs)
+        try:
+            result = await translate_chunk(llm=llm, text="\n\n".join(blocks), attempts=1, **kwargs)
+        except Exception:
+            break
         paragraphs = split_paragraphs(result.translated_text)
         if len(paragraphs) == len(blocks):
-            return paragraphs, result.new_terms
+            return [keep_unfinished(s, t) for s, t in zip(blocks, paragraphs)], result.new_terms
 
+    # Per block: each block's following text is the next block
+    following = kwargs.pop("following", "")
     translations: list[str] = []
     new_terms: list[GlossaryItem] = []
-    for block in blocks:
-        single, terms = await translate_blocks(llm, [block], **kwargs)
+    for i, block in enumerate(blocks):
+        next_text = blocks[i + 1] if i + 1 < len(blocks) else following
+        single, terms = await translate_blocks(llm, [block], following=next_text, **kwargs)
         translations += single
         new_terms += terms
     return translations, new_terms
