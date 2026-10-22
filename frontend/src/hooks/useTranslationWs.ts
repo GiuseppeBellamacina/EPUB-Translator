@@ -18,41 +18,32 @@ interface TranslateOptions {
 
 const MAX_EVENTS = 500;
 
-/** Runs a translation over the WebSocket; keeps its events, newest first. */
+/**
+ * Starts or follows a translation over the WebSocket; keeps its events, newest first.
+ * The job runs on the server: closing the socket only stops following it.
+ */
 export function useTranslationWs(onFinished?: () => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [events, setEvents] = useState<JobEvent[]>([]);
 
-  const startTranslation = useCallback(
-    (options: TranslateOptions) => {
+  const connect = useCallback(
+    (bookId: number, first: object) => {
+      wsRef.current?.close();
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/translate/${options.bookId}`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/translate/${bookId}`);
       wsRef.current = ws;
-      setEvents([]);
 
       ws.onopen = () => {
         setIsConnected(true);
-        ws.send(
-          JSON.stringify({
-            action: "start",
-            provider_id: options.providerId,
-            source_language: options.sourceLanguage || "english",
-            target_language: options.targetLanguage || "italian",
-            model: options.model,
-            temperature: options.temperature ?? 0.0,
-            style_instructions: options.styleInstructions || "",
-            restart: options.restart ?? false,
-            enable_review: options.enableReview ?? true,
-            review_model: options.reviewModel || undefined,
-          }),
-        );
+        ws.send(JSON.stringify(first));
       };
       ws.onmessage = (message) => {
         const event: JobEvent = JSON.parse(message.data);
         setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
       };
       ws.onclose = () => {
+        if (wsRef.current !== ws) return; // replaced or the page left
         setIsConnected(false);
         wsRef.current = null;
         onFinished?.();
@@ -62,11 +53,40 @@ export function useTranslationWs(onFinished?: () => void) {
     [onFinished],
   );
 
+  const startTranslation = useCallback(
+    (options: TranslateOptions) => {
+      setEvents([]);
+      connect(options.bookId, {
+        action: "start",
+        provider_id: options.providerId,
+        source_language: options.sourceLanguage || "english",
+        target_language: options.targetLanguage || "italian",
+        model: options.model,
+        temperature: options.temperature ?? 0.0,
+        style_instructions: options.styleInstructions || "",
+        restart: options.restart ?? false,
+        enable_review: options.enableReview ?? true,
+        review_model: options.reviewModel || undefined,
+      });
+    },
+    [connect],
+  );
+
+  /** Follow a job that is already running or queued (e.g. after reopening the page). */
+  const watchTranslation = useCallback((bookId: number) => connect(bookId, { action: "watch" }), [connect]);
+
   const stopTranslation = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ action: "stop" }));
     }
   }, []);
 
-  return { startTranslation, stopTranslation, isConnected, events, setEvents };
+  /** Stop following (the job goes on); for page unmount. */
+  const disconnect = useCallback(() => {
+    const ws = wsRef.current;
+    wsRef.current = null;
+    ws?.close();
+  }, []);
+
+  return { startTranslation, watchTranslation, stopTranslation, disconnect, isConnected, events, setEvents };
 }

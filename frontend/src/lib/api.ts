@@ -248,4 +248,19 @@ export interface BookProgress {
   eta_seconds: number | null;
   /** newest first */
   recent_events: JobEvent[];
+  /** settings of the last run (null for runs before they were stored) */
+  config: RunConfig | null;
+  /** waiting in the queue: "pending", or "paused" after a stop/restart */
+  queue_status: "pending" | "paused" | null;
+}
+
+/** A run's settings, as the server stores them (snake_case). */
+export interface RunConfig {
+  provider_id: number;
+  model?: string | null;
+  review_model?: string | null;
+  enable_review: boolean;
+  source_language?: string | null;
+  target_language?: string | null;
+  style_instructions: string;
 }
