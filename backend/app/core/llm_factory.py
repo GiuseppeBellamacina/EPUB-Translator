@@ -177,14 +177,17 @@ def structured(llm: BaseChatModel, schema: type) -> Runnable:
     return llm.with_structured_output(schema)
 
 
-def structured_chain(prompt: Runnable, llm: BaseChatModel, schema: type) -> Runnable:
+def structured_chain(
+    prompt: Runnable, llm: BaseChatModel, schema: type, attempts: int | None = None
+) -> Runnable:
     """``prompt | structured output`` retried as a whole on any failure.
 
     Covers what SDK retries don't: unparsable/invalid structured output and errors
-    that outlast the SDK's own backoff.
+    that outlast the SDK's own backoff. ``attempts`` defaults to ``chain_retries``.
     """
     return (prompt | structured(llm, schema)).with_retry(
-        stop_after_attempt=max(1, settings.chain_retries), wait_exponential_jitter=True
+        stop_after_attempt=max(1, attempts or settings.chain_retries),
+        wait_exponential_jitter=True,
     )
 
 

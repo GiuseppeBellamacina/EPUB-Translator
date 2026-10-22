@@ -61,6 +61,7 @@ class ChapterState(BaseModel):
     chunks: list[Chunk]
     chapter_summary: str = ""
     lead_context: str = ""  # end of the previous unit, context for the first chunk
+    trail_context: str = ""  # start of the next unit, following text of the last chunk
     source_language: str = "english"
     target_language: str = "italian"
     style_instructions: str = ""
@@ -93,6 +94,13 @@ class ChapterState(BaseModel):
         return "\n\n".join(self.current_blocks)
 
 
+def _following(state: ChapterState) -> str:
+    """Text right after the current chunk: next chunk's first block, or the next unit."""
+    if state.chunk_index + 1 < len(state.chunks):
+        return state.chunks[state.chunk_index + 1].blocks[0].text
+    return state.trail_context
+
+
 def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledStateGraph:
     """Compile the per-chapter translation graph for a given model and shared glossary."""
 
@@ -112,6 +120,7 @@ def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledState
                 target_language=state.target_language,
                 style_instructions=state.style_instructions,
                 feedback=state.feedback,
+                following=_following(state),
             )
         except Exception as e:
             writer(
@@ -362,6 +371,7 @@ class TranslationPipeline:
         total_chapters: int = 1,
         previous: list[str | None] | None = None,
         lead_context: str = "",
+        trail_context: str = "",
         chapter_summary: str = "",
     ) -> AsyncGenerator[TranslationProgress, None]:
         """
@@ -370,7 +380,8 @@ class TranslationPipeline:
         ``previous`` is the resume checkpoint (one entry per block, None = to do):
         chunks whose blocks are all translated are skipped. Chunking is deterministic,
         so the same blocks always produce the same chunks. ``lead_context`` (the end
-        of the previous unit) is the context of the first chunk.
+        of the previous unit) is the context of the first chunk; ``trail_context`` (the
+        start of the next unit) tells the last chunk how its text continues.
 
         Yields TranslationProgress events, including a ``chunk_done`` checkpoint per
         chunk. The final ``chapter_done`` event carries ``translated_blocks`` (one per
@@ -411,6 +422,7 @@ class TranslationPipeline:
                 translated_blocks=translated,
                 chapter_summary=chapter_summary or self.book_summary,
                 lead_context=lead_context,
+                trail_context=trail_context,
                 source_language=self.source_language,
                 target_language=self.target_language,
                 style_instructions=self.style_instructions,
