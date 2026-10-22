@@ -35,33 +35,6 @@ const ISO: Record<string, string> = {
 const languageName = (value: string | null | undefined, fallback: string) =>
   value ? (ISO[value.toLowerCase().split(/[-_]/)[0]] ?? value.toLowerCase()) : fallback;
 
-interface RunConfig {
-  providerId: number;
-  model: string;
-  enableReview: boolean;
-  reviewModel: string;
-  sourceLang: string;
-  targetLang: string;
-  style: string;
-}
-
-// shortcut: per browser; the server does not store the job's provider id or reviewer yet
-function loadConfig(bookId: number): RunConfig | null {
-  try {
-    return JSON.parse(localStorage.getItem(`translate-config-${bookId}`) ?? "null");
-  } catch {
-    return null;
-  }
-}
-
-function saveConfig(bookId: number, config: RunConfig) {
-  try {
-    localStorage.setItem(`translate-config-${bookId}`, JSON.stringify(config));
-  } catch {
-    // private window: the page still works, it just forgets the choices
-  }
-}
-
 function LanguageSelect({
   label,
   value,
@@ -116,49 +89,44 @@ export function TranslatePage() {
     api.getGlossary(id).then(setGlossary);
   }, [id]);
 
-  const { startTranslation, stopTranslation, isConnected, events, setEvents } = useTranslationWs(refresh);
+  const { startTranslation, watchTranslation, stopTranslation, disconnect, isConnected, events, setEvents } =
+    useTranslationWs(refresh);
 
   useEffect(() => {
+    let active = true;
     Promise.all([api.getBook(id), api.getProviders(), api.getGlossary(id), api.getProgress(id)]).then(
       ([b, p, g, prog]) => {
+        if (!active) return;
         setBook(b);
         setProviders(p);
         setGlossary(g);
         setProgress(prog);
         setEvents(prog.recent_events); // the recent log survives a page reload
-        setSourceLang(languageName(b.source_language, "english"));
-        setTargetLang(languageName(b.target_language, "italian"));
-        // The last run's choices, so a running or paused job shows its own settings
-        const saved = loadConfig(id);
-        if (saved && p.some((x) => x.id === saved.providerId)) {
-          setProviderId(saved.providerId);
-          setModel(saved.model);
-          setEnableReview(saved.enableReview);
-          setReviewModel(saved.reviewModel);
-          setSourceLang(saved.sourceLang);
-          setTargetLang(saved.targetLang);
-          setStyle(saved.style);
-        } else if (p.length) setProviderId(p[0].id);
+        // The last run's settings, so a running or paused job shows (and resumes with) its own
+        const config = prog.config && p.some((x) => x.id === prog.config?.provider_id) ? prog.config : null;
+        setProviderId(config?.provider_id ?? p[0]?.id ?? null);
+        setModel(config?.model ?? "");
+        setEnableReview(config?.enable_review ?? true);
+        setReviewModel(config?.review_model ?? "");
+        setSourceLang(languageName(config?.source_language ?? b.source_language, "english"));
+        setTargetLang(languageName(config?.target_language ?? b.target_language, "italian"));
+        setStyle(config?.style_instructions ?? "");
+        if (prog.running || prog.queue_status === "pending") watchTranslation(id);
       },
     );
-  }, [id, setEvents]);
+    return () => {
+      active = false;
+      disconnect(); // leaving the page stops following, the job goes on
+    };
+  }, [id, setEvents, watchTranslation, disconnect]);
 
-  // Poll the run state while a job is running (counts, in flight, ETA). A job started
-  // before this page was opened sends its events elsewhere: take them from the poll.
+  // Poll the run state while a job is running (counts, in flight, ETA)
   const running = isConnected || !!progress?.running;
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(
-      () =>
-        api.getProgress(id).then((prog) => {
-          setProgress(prog);
-          if (!isConnected) setEvents(prog.recent_events);
-          if (!prog.running && !isConnected) refresh();
-        }),
-      4000,
-    );
+    const timer = setInterval(() => api.getProgress(id).then(setProgress), 4000);
     return () => clearInterval(timer);
-  }, [running, isConnected, id, setEvents, refresh]);
+  }, [running, id]);
 
   // New glossary terms appear in the side panel as they are found
   const latest = events[0];
@@ -214,7 +182,6 @@ export function TranslatePage() {
   const start = (restart = false) => {
     if (providerId === null) return;
     if (restart && !window.confirm("Discard all saved progress and translate the book from scratch?")) return;
-    saveConfig(id, { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style });
     startTranslation({
       bookId: id,
       providerId,

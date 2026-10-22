@@ -131,6 +131,7 @@ export function logEntries(eventsNewestFirst: JobEvent[], unitAbbr: string): Log
         out.push({ ...base, kind: "error", unit: e.chapter_index !== undefined ? at : null, text: e.message ?? "Error" });
         break;
       case "started":
+      case "queued":
       case "cancelled":
       case "job_complete":
       case "building_epub":
