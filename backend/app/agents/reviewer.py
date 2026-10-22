@@ -5,6 +5,7 @@ Reviewer Agent — Validates translation quality, consistency, and glossary adhe
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.core.llm_factory import structured_chain
 from app.models.schemas import GlossaryItem, ReviewResult
 
 REVIEW_PROMPT = ChatPromptTemplate.from_messages(
@@ -95,7 +96,7 @@ async def review_translation(
     Returns:
         ReviewResult with approval status, issues, and optional correction
     """
-    chain = REVIEW_PROMPT | llm.with_structured_output(ReviewResult)
+    chain = structured_chain(REVIEW_PROMPT, llm, ReviewResult)
 
     result = await chain.ainvoke(
         {

@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.agents.pipeline import TranslationPipeline
+from app.core.config import settings
 from app.core.encryption import decrypt_api_key
 from app.core.llm_factory import LLMConfig, create_llm
 from app.db.database import async_session
@@ -84,6 +85,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
             api_key = (
                 decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
             )
+            provider_params = provider.params or {}
             llm_config = LLMConfig(
                 provider=provider.provider_type,
                 model=data.get("model") or provider.default_model or "gpt-4o-mini",
@@ -91,6 +93,11 @@ async def translate_ws(websocket: WebSocket, book_id: int):
                 base_url=provider.base_url,
                 temperature=data.get("temperature", 0.0),
                 max_tokens=data.get("max_tokens"),
+                requests_per_second=provider_params.get(
+                    "requests_per_second", settings.requests_per_second
+                ),
+                max_retries=provider_params.get("max_retries", settings.llm_max_retries),
+                structured_output_method=provider_params.get("structured_output_method"),
             )
 
             try:

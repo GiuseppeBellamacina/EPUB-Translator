@@ -5,6 +5,7 @@ Translator Agent — Translates text chunks with glossary awareness and context.
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.core.llm_factory import structured_chain
 from app.models.schemas import GlossaryItem, TranslationResult
 
 TRANSLATION_PROMPT = ChatPromptTemplate.from_messages(
@@ -97,7 +98,7 @@ async def translate_chunk(
     Returns:
         TranslationResult with translated text and any new terms found
     """
-    chain = TRANSLATION_PROMPT | llm.with_structured_output(TranslationResult)
+    chain = structured_chain(TRANSLATION_PROMPT, llm, TranslationResult)
 
     result = await chain.ainvoke(
         {
