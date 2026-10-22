@@ -7,12 +7,19 @@ The per-chapter flow is modeled as a `StateGraph` with a Pydantic state:
         ▲           │            │
         └── retry ──┘            └── next chunk ──▶ translate
 
+The review step is optional (``enable_review``); a rejected chunk is retranslated
+with the reviewer's issues in the prompt. A chunk whose translation fails is not
+stored as translated: its blocks stay ``None`` (original kept) and its index is
+reported in ``failed_chunks`` so a later run can retry it.
+
+The glossary is a single shared ``Glossary`` read live by every node, so terms
+learned in one chunk/chapter are used everywhere from then on.
+
 Nodes emit progress via `get_stream_writer()` (custom stream mode), which the
 `TranslationPipeline` wrapper consumes and re-yields as `TranslationProgress`
 events for the WebSocket layer.
 """
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
@@ -23,6 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.analyzer import analyze_context
+from app.agents.glossary import Glossary
 from app.agents.reviewer import review_translation
 from app.agents.translator_agent import split_paragraphs, translate_blocks
 from app.models.schemas import AnalysisResult, GlossaryItem
@@ -44,47 +52,6 @@ class TranslationProgress:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-def _merge_glossary(
-    existing: list[GlossaryItem], new_entries: list[GlossaryItem]
-) -> list[GlossaryItem]:
-    """Append new entries to a glossary, skipping duplicate source terms."""
-    result = list(existing)
-    seen = {e.source_term.lower() for e in result}
-    for entry in new_entries:
-        key = entry.source_term.lower()
-        if key not in seen:
-            result.append(entry)
-            seen.add(key)
-    return result
-
-
-def _match_case(source: str, replacement: str) -> str:
-    """Mirror the casing of the matched source onto the replacement."""
-    if source.isupper():
-        return replacement.upper()
-    if source[:1].isupper():
-        return replacement[:1].upper() + replacement[1:]
-    return replacement
-
-
-def _enforce_glossary(text: str, glossary: list[GlossaryItem]) -> str:
-    """Deterministically enforce glossary terms left untranslated by the LLM.
-
-    For each glossary entry that should be translated, replace any remaining
-    whole-word occurrences of the source term with the target term, mirroring
-    the original casing. This guarantees consistency for terms (e.g. proper
-    names) the model may have missed in some occurrences.
-    """
-    if not text or not glossary:
-        return text
-    for entry in glossary:
-        if entry.do_not_translate or not entry.target_term.strip():
-            continue
-        pattern = re.compile(r"\b" + re.escape(entry.source_term) + r"\b", re.IGNORECASE)
-        text = pattern.sub(lambda m: _match_case(m.group(0), entry.target_term), text)
-    return text
-
-
 class ChapterState(BaseModel):
     """Pydantic state shared across the per-chapter translation graph."""
 
@@ -92,32 +59,33 @@ class ChapterState(BaseModel):
 
     # Inputs
     chunks: list[Chunk]
-    glossary: list[GlossaryItem] = Field(default_factory=list)
     chapter_summary: str = ""
     source_language: str = "english"
     target_language: str = "italian"
     style_instructions: str = ""
     max_retries: int = 1
+    enable_review: bool = True
 
     # Per-chunk working state
     chunk_index: int = 0
     retries: int = 0
     current_blocks: list[str] = Field(default_factory=list)  # one translation per chunk block
     current_new_terms: list[GlossaryItem] = Field(default_factory=list)
-    review_approved: bool = False
+    feedback: str = ""  # reviewer issues for the retranslation
     should_retry: bool = False
     translation_failed: bool = False
 
-    # Output: one translation per block of the chapter, in block order
-    translated_blocks: list[str] = Field(default_factory=list)
+    # Output: one translation per block of the chapter (None = failed, keep original)
+    translated_blocks: list[str | None] = Field(default_factory=list)
+    failed_chunks: list[int] = Field(default_factory=list)
 
     @property
     def current_translation(self) -> str:
         return "\n\n".join(self.current_blocks)
 
 
-def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
-    """Compile the per-chapter translation graph for a given model."""
+def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledStateGraph:
+    """Compile the per-chapter translation graph for a given model and shared glossary."""
 
     async def translate_node(state: ChapterState) -> dict[str, Any]:
         writer = get_stream_writer()
@@ -129,10 +97,11 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                 [b.text for b in chunk.blocks],
                 context=chunk.context_text,
                 chapter_summary=state.chapter_summary,
-                glossary=state.glossary,
+                glossary=glossary.relevant(chunk.context_text + "\n" + chunk.text),
                 source_language=state.source_language,
                 target_language=state.target_language,
                 style_instructions=state.style_instructions,
+                feedback=state.feedback,
             )
         except Exception as e:
             writer(
@@ -143,11 +112,7 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                     "message": f"Translation error on chunk {state.chunk_index + 1}: {e}",
                 }
             )
-            return {
-                "current_blocks": [b.text for b in chunk.blocks],
-                "current_new_terms": [],
-                "translation_failed": True,
-            }
+            return {"current_blocks": [], "current_new_terms": [], "translation_failed": True}
 
         writer(
             {
@@ -173,14 +138,14 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                 llm=llm,
                 original_text=chunk.text,
                 translated_text=state.current_translation,
-                glossary=state.glossary,
+                glossary=glossary.relevant(chunk.text),
                 source_language=state.source_language,
                 target_language=state.target_language,
                 style_instructions=state.style_instructions,
             )
         except Exception:
             # If review fails, accept the translation as-is.
-            return {"review_approved": True, "should_retry": False}
+            return {"should_retry": False}
 
         if review.approved:
             writer(
@@ -191,7 +156,7 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                     "message": f"Chunk {state.chunk_index + 1}/{total} approved",
                 }
             )
-            return {"review_approved": True, "should_retry": False}
+            return {"should_retry": False}
 
         # Not approved: keep the corrected text as the current best, but only if it
         # still has one paragraph per block (otherwise it would break alignment).
@@ -206,7 +171,9 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                     "event_type": "chunk_rejected",
                     "chunk_index": state.chunk_index,
                     "total_chunks": total,
-                    "message": f"Chunk {state.chunk_index + 1}/{total} rejected by reviewer, retranslating...",
+                    "message": f"Chunk {state.chunk_index + 1}/{total} rejected by reviewer, "
+                    "retranslating...",
+                    "data": {"issues": review.issues + review.glossary_violations},
                 }
             )
         else:
@@ -219,37 +186,49 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                     "data": {"translated_text": corrected},
                 }
             )
-        updates: dict[str, Any] = {
-            "review_approved": False,
-            "current_blocks": corrected_blocks,
-            "should_retry": should_retry,
-        }
+        updates: dict[str, Any] = {"current_blocks": corrected_blocks, "should_retry": should_retry}
         if should_retry:
             updates["retries"] = state.retries + 1
+            updates["feedback"] = "\n".join(
+                [f"- {issue}" for issue in review.issues]
+                + [f"- Glossary violation: {v}" for v in review.glossary_violations]
+            )
         return updates
 
     def finalize_node(state: ChapterState) -> dict[str, Any]:
         writer = get_stream_writer()
-        glossary = _merge_glossary(state.glossary, state.current_new_terms)
-        if state.current_new_terms:
+        chunk = state.chunks[state.chunk_index]
+        reset = {
+            "chunk_index": state.chunk_index + 1,
+            "retries": 0,
+            "feedback": "",
+            "should_retry": False,
+            "translation_failed": False,
+            "current_new_terms": [],
+            "current_blocks": [],
+        }
+        if state.translation_failed:
+            return {
+                **reset,
+                "translated_blocks": state.translated_blocks + [None] * len(chunk.blocks),
+                "failed_chunks": state.failed_chunks + [state.chunk_index],
+            }
+
+        accepted = glossary.add(state.current_new_terms, source_text=chunk.text)
+        if accepted:
             writer(
                 {
                     "event_type": "glossary_update",
                     "chunk_index": state.chunk_index,
                     "total_chunks": len(state.chunks),
-                    "message": f"Added {len(state.current_new_terms)} new glossary terms",
-                    "data": {"new_terms": [t.model_dump() for t in state.current_new_terms]},
+                    "message": f"Added {len(accepted)} new glossary terms",
+                    "data": {"new_terms": [t.model_dump() for t in accepted]},
                 }
             )
         return {
+            **reset,
             "translated_blocks": state.translated_blocks
-            + [_enforce_glossary(t, glossary) for t in state.current_blocks],
-            "glossary": glossary,
-            "chunk_index": state.chunk_index + 1,
-            "retries": 0,
-            "should_retry": False,
-            "translation_failed": False,
-            "current_new_terms": [],
+            + [glossary.enforce(t) for t in state.current_blocks],
         }
 
     def complete_node(state: ChapterState) -> dict[str, Any]:
@@ -260,14 +239,16 @@ def build_chapter_graph(llm: BaseChatModel) -> CompiledStateGraph:
                 "total_chunks": len(state.chunks),
                 "data": {
                     "translated_blocks": state.translated_blocks,
-                    "glossary": [e.model_dump() for e in state.glossary],
+                    "failed_chunks": state.failed_chunks,
                 },
             }
         )
         return {}
 
     def route_after_translate(state: ChapterState) -> str:
-        return "finalize" if state.translation_failed else "review"
+        if state.translation_failed or not state.enable_review:
+            return "finalize"
+        return "review"
 
     def route_after_review(state: ChapterState) -> str:
         return "translate" if state.should_retry else "finalize"
@@ -301,6 +282,7 @@ class TranslationPipeline:
         chunker: SmartChunker instance (or creates default)
         max_retries: Max translation retry attempts on review failure
         style_instructions: Optional free-form user instructions on tone/style
+        enable_review: Run the reviewer on every chunk (doubles the LLM calls)
     """
 
     def __init__(
@@ -311,6 +293,7 @@ class TranslationPipeline:
         chunker: SmartChunker | None = None,
         max_retries: int = 1,
         style_instructions: str = "",
+        enable_review: bool = True,
     ):
         self.llm = llm
         self.source_language = source_language
@@ -318,32 +301,34 @@ class TranslationPipeline:
         self.chunker = chunker or SmartChunker()
         self.max_retries = max_retries
         self.style_instructions = style_instructions
-        self.glossary: list[GlossaryItem] = []
+        self.enable_review = enable_review
+        self.glossary = Glossary()
         self.book_summary: str = ""
         self._cancelled = False
-        self._graph = build_chapter_graph(llm)
+        self._graph = build_chapter_graph(llm, self.glossary)
 
     def cancel(self):
         """Signal cancellation to stop processing."""
         self._cancelled = True
 
     def set_glossary(self, entries: list[GlossaryItem]):
-        """Set initial glossary (e.g., from user edits or previous sessions)."""
-        self.glossary = list(entries)
+        """Seed the glossary (e.g., from user edits or previous sessions)."""
+        self.glossary.add(entries)
 
-    def add_glossary_entries(self, entries: list[GlossaryItem]):
-        """Add new entries to glossary, avoiding duplicates."""
-        self.glossary = _merge_glossary(self.glossary, entries)
+    def add_glossary_entries(self, entries: list[GlossaryItem]) -> list[GlossaryItem]:
+        """Add new entries to glossary, never overriding existing ones."""
+        return self.glossary.add(entries)
 
     async def analyze_chapter(self, text: str) -> AnalysisResult:
         """Run context analysis on a chapter and seed the glossary."""
         result = await analyze_context(self.llm, text, self.source_language, self.target_language)
-        self.add_glossary_entries(result.key_terms)
-        self.add_glossary_entries(
+        self.glossary.add(result.key_terms, source_text=text)
+        self.glossary.add(
             [
                 GlossaryItem(source_term=term, target_term=term, do_not_translate=True)
                 for term in result.do_not_translate
-            ]
+            ],
+            source_text=text,
         )
         return result
 
@@ -358,7 +343,8 @@ class TranslationPipeline:
         Translate a chapter via the LangGraph pipeline: chunk → translate → review → merge.
 
         Yields TranslationProgress events for real-time UI updates. The final
-        event contains the translated text in data["translated_blocks"].
+        ``chapter_done`` event carries ``translated_blocks`` (one per block, None for
+        blocks of failed chunks) and ``failed_chunks``.
         """
         if self._cancelled:
             return
@@ -379,21 +365,21 @@ class TranslationPipeline:
                 chapter_index=chapter_index,
                 total_chapters=total_chapters,
                 message="Chapter has no translatable content",
-                data={"translated_blocks": []},
+                data={"translated_blocks": [], "failed_chunks": []},
             )
             return
 
         init_state = ChapterState(
             chunks=chunks,
-            glossary=self.glossary,
             chapter_summary=chapter_summary or self.book_summary,
             source_language=self.source_language,
             target_language=self.target_language,
             style_instructions=self.style_instructions,
             max_retries=self.max_retries,
+            enable_review=self.enable_review,
         )
 
-        translated_blocks: list[str] = []
+        result: dict[str, Any] = {"translated_blocks": [], "failed_chunks": []}
         # Each chunk can fan out to translate/review/(retry)/finalize, plus a
         # terminal complete node — budget generously to avoid recursion limits.
         recursion_limit = total_chunks * (4 + 2 * self.max_retries) + 10
@@ -409,9 +395,7 @@ class TranslationPipeline:
             event_type = event.get("event_type", "")
 
             if event_type == "chapter_complete":
-                data = event.get("data", {})
-                translated_blocks = data.get("translated_blocks", [])
-                self.glossary = [GlossaryItem(**g) for g in data.get("glossary", [])]
+                result = event.get("data", {})
                 continue
 
             yield TranslationProgress(
@@ -424,10 +408,12 @@ class TranslationPipeline:
                 data=event.get("data", {}),
             )
 
+        failed = result.get("failed_chunks", [])
         yield TranslationProgress(
             event_type="chapter_done",
             chapter_index=chapter_index,
             total_chapters=total_chapters,
-            message=f"Chapter {chapter_index + 1}/{total_chapters} completed",
-            data={"translated_blocks": translated_blocks},
+            message=f"Chapter {chapter_index + 1}/{total_chapters} completed"
+            + (f" ({len(failed)} chunk(s) failed)" if failed else ""),
+            data=result,
         )

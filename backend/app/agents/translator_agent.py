@@ -27,7 +27,9 @@ CRITICAL RULES:
 separated by a blank line — never merge or split paragraphs
 4. Inline markup appears as numbered placeholders like <1>...</1> or <2/>: keep every \
 placeholder, wrapped around the translation of the same words; never translate, renumber or drop them
-5. If you encounter new important terms not in the glossary, note them
+5. Report in new_terms any recurring name or term NOT already in the glossary that must be \
+translated consistently later (characters, places, invented words, titles), with the translation \
+you used; source_term must be copied exactly as it appears in the text. Omit common words
 6. Maintain the same level of formality as the original
 7. Do not add explanations or notes in the translation itself
 
@@ -42,7 +44,7 @@ CHAPTER CONTEXT: {chapter_summary}
 
 PREVIOUS CONTEXT (for continuity, do NOT translate this):
 {context}
-
+{feedback}
 ---
 
 The text has exactly {paragraph_count} paragraph(s); return exactly {paragraph_count}.
@@ -88,6 +90,7 @@ async def translate_chunk(
     source_language: str,
     target_language: str,
     style_instructions: str = "",
+    feedback: str = "",
 ) -> TranslationResult:
     """
     Translate a text chunk with glossary awareness and context.
@@ -101,6 +104,7 @@ async def translate_chunk(
         source_language: Source language
         target_language: Target language
         style_instructions: Optional free-form user instructions on tone/register/style
+        feedback: Reviewer issues from a rejected previous attempt, to fix this time
 
     Returns:
         TranslationResult with translated text and any new terms found
@@ -115,12 +119,22 @@ async def translate_chunk(
             "chapter_summary": chapter_summary or "No summary available",
             "glossary": _format_glossary(glossary),
             "style_instructions": _format_style(style_instructions),
+            "feedback": _format_feedback(feedback),
             "source_language": source_language,
             "target_language": target_language,
         }
     )
 
     return result
+
+
+def _format_feedback(feedback: str) -> str:
+    if not feedback.strip():
+        return ""
+    return (
+        "\nA REVIEWER REJECTED THE PREVIOUS TRANSLATION OF THIS TEXT. "
+        f"Fix these issues:\n{feedback.strip()}\n"
+    )
 
 
 def split_paragraphs(text: str) -> list[str]:
