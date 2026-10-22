@@ -40,6 +40,11 @@ def _wait(client, until, timeout=30):
     raise AssertionError(f"queue did not settle: {queue}")
 
 
+def _slow(monkeypatch):
+    """Slow calls, so a stop lands while the (tiny) sample book is still translating."""
+    monkeypatch.setattr("app.services.job_runner.create_llm", lambda cfg: ScriptedLLM(delay=0.15))
+
+
 def _terms(client, book_id):
     return {e["source_term"] for e in client.get(f"/api/glossary/{book_id}").json()}
 
@@ -71,7 +76,8 @@ def test_queue_translates_books_in_order_and_carries_the_glossary_on_request(
     assert config["provider_id"] == provider_id and config["enable_review"] is True
 
 
-def test_stop_pauses_the_current_book_and_halts_the_queue(client, sample_epub):
+def test_stop_pauses_the_current_book_and_halts_the_queue(client, sample_epub, monkeypatch):
+    _slow(monkeypatch)
     provider_id, (first, second) = _setup(client, sample_epub)
     client.post("/api/queue", json={"book_ids": [first, second], "provider_id": provider_id})
     _wait(client, lambda q: q["items"][0]["status"] == "running")
@@ -85,7 +91,7 @@ def test_stop_pauses_the_current_book_and_halts_the_queue(client, sample_epub):
     client.post("/api/queue/stop")
 
     queue = _wait(client, lambda q: not q["running"])
-    assert [i["status"] for i in queue["items"]] == ["paused", "pending"]
+    assert [i["status"] for i in queue["items"]] == ["paused", "paused"]
     assert _status(client, first) == "paused" and _status(client, second) == "uploaded"
     assert client.get(f"/api/books/{first}/progress").json()["queue_status"] == "paused"
 
@@ -125,3 +131,41 @@ def test_closing_the_socket_does_not_pause_the_job(client, sample_epub):
         ws.send_json({"action": "watch"})
         with pytest.raises(WebSocketDisconnect):
             ws.receive_json()
+
+
+def test_starting_another_book_does_not_resume_paused_ones(client, sample_epub, monkeypatch):
+    _slow(monkeypatch)
+    provider_id, (first, second, other) = _setup(client, sample_epub, books=3)
+    client.post("/api/queue", json={"book_ids": [first, second], "provider_id": provider_id})
+    _wait(client, lambda q: q["items"][0]["status"] == "running")
+    client.post("/api/queue/stop")
+    _wait(client, lambda q: not q["running"])
+
+    with client.websocket_connect(f"/ws/translate/{other}") as ws:
+        ws.send_json({"action": "start", "provider_id": provider_id})
+        while ws.receive_json()["event"] != "job_complete":
+            pass
+    queue = _wait(client, lambda q: not q["running"])
+    status = {i["book_id"]: i["status"] for i in queue["items"]}
+    assert status == {other: "done", first: "paused", second: "paused"}
+    assert _status(client, second) == "uploaded"
+
+    client.post("/api/queue/start")
+    queue = _wait(client, lambda q: not q["running"])
+    assert {i["status"] for i in queue["items"]} == {"done"}
+
+
+def test_keep_glossary_never_carries_from_an_earlier_batch(client, sample_epub):
+    provider_id, (old, first, second) = _setup(client, sample_epub, books=3)
+    client.post(f"/api/glossary/{old}/entry", json={"source_term": "Moon", "target_term": "Luna"})
+    client.post("/api/queue", json={"book_ids": [old], "provider_id": provider_id})
+    _wait(client, lambda q: not q["running"] and q["items"][0]["status"] == "done")
+
+    client.post(f"/api/glossary/{first}/entry", json={"source_term": "Sun", "target_term": "Sole"})
+    client.post(
+        "/api/queue",
+        json={"book_ids": [first, second], "provider_id": provider_id, "keep_glossary": True},
+    )
+    _wait(client, lambda q: not q["running"] and all(i["status"] == "done" for i in q["items"]))
+    assert "Moon" not in _terms(client, first)
+    assert {"Sun"} <= _terms(client, second) and "Moon" not in _terms(client, second)
