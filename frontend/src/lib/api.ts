@@ -44,6 +44,10 @@ export const api = {
   getPreview: (bookId: number, chapter: number) =>
     request<Preview>(`/books/${bookId}/preview?chapter_index=${chapter}`),
   downloadBook: (bookId: number) => `${API_BASE}/books/${bookId}/download`,
+  getEstimate: (bookId: number, refreshPrices = false) =>
+    request<CostEstimate>(
+      `/books/${bookId}/estimate${refreshPrices ? "?refresh_prices=true" : ""}`,
+    ),
 
   // Glossary
   getGlossary: (bookId: number) =>
@@ -135,4 +139,34 @@ export interface GlossaryEntryCreate {
   target_term: string;
   context?: string;
   do_not_translate?: boolean;
+}
+
+export interface ModelUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
+}
+
+export interface ModelEstimate {
+  provider: "openai" | "anthropic";
+  model: string;
+  input_per_million: number;
+  output_per_million: number;
+  reasoning: boolean;
+  with_review: ModelUsage;
+  without_review: ModelUsage;
+}
+
+export interface CostEstimate {
+  profile: {
+    units: number;
+    chunks: number;
+    source_tokens: number;
+    context_tokens: number;
+    analysis_tokens: number;
+  };
+  target_language: string;
+  prices_fetched_at: number;
+  prices_source: "live" | "cache" | "stale-cache" | "bundled";
+  models: ModelEstimate[];
 }

@@ -14,6 +14,7 @@ Intelligent EPUB and PDF translation tool with a modern React UI and an agentic 
 - **Spacing Fix**: Post-processing eliminates excessive whitespace in rebuilt EPUBs
 - **Same format, same layout**: EPUB in → EPUB out, PDF in → PDF out; structure, images, inline formatting and page layout are preserved, only the language changes
 - **Resumable jobs**: progress is checkpointed per chunk; a stopped, disconnected or crashed job resumes where it left off (or can start over)
+- **Cost estimate on upload**: per-model cost (OpenAI and Claude, with or without review) computed from the book's real chunks with prices updated daily
 - **Rate-limit aware**: configurable requests/second, parallel chapters and automatic retries with backoff on 429/5xx
 - **Deployable**: Docker Compose setup (frontend + backend)
 

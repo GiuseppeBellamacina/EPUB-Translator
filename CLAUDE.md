@@ -72,4 +72,11 @@ New DB columns are added automatically by `init_db` (`ALTER TABLE ADD COLUMN` fo
 
 Defaults live in `Settings`, `config.yaml` `translation:` overrides them at startup, and a provider's `params` overrides them per job. Reasoning models (`gpt-5*`, `o*`) are created without `temperature`.
 
-**REST** (`app/api/routes.py`, mounted at `/api`): providers CRUD, book upload/list/download/preview, glossary editing. Frontend calls go through `src/lib/api.ts`.
+**REST** (`app/api/routes.py`, mounted at `/api`): providers CRUD, book upload/list/download/preview/estimate, glossary editing. Frontend calls go through `src/lib/api.ts`.
+
+**Cost estimates** (`GET /api/books/{id}/estimate`, shown on the upload page by `components/CostEstimate.tsx`):
+- **Prices** (`services/pricing.py`): OpenAI and Anthropic chat-model prices come from LiteLLM's public price list. They are cached in `data/pricing_cache.json` for `pricing_refresh_hours`; if the download fails, the stale cache is used, then `app/data/pricing_fallback.json`. Refresh that bundled snapshot with `scripts/snapshot_prices.py`. Tests run offline: `EPUB_PRICING_URL=""` selects the snapshot.
+- **Token profile** (`services/cost_estimator.py`): `profile_document` walks the book's real chunks. It reuses `translation_service.analysis_text`/`lead_context_for`, so it counts what the pipeline actually sends. The profile is cached in `Book.token_profile`.
+- **Prompt sizes**: `usage` measures the real prompt templates. Approximations (target-language expansion, rejection rate, Claude tokenizer factor, thinking tokens) are module constants.
+- **Model rules** (`llm_factory`): `thinks_by_default` and `accepts_temperature` decide which models are billed for thinking (OpenAI reasoning models, Claude ≥ 5) and which get `temperature` (Claude Opus 4.7+ / 5.x reject it with a 400).
+- **Model list**: `config.yaml` `pricing.models`, plus the default models of configured providers.
