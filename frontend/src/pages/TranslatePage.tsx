@@ -320,7 +320,7 @@ export function TranslatePage() {
             <div className="flex items-center justify-between border-t border-line pt-3.5">
               <span className="text-muted">Estimated total</span>
               <span className="font-serif text-xl">
-                <ModelCost bookId={id} providerId={providerId} model={model} withReview={enableReview} />
+                <ModelCost bookId={id} providerId={providerId} model={model} withReview={enableReview} reviewModel={reviewModel} />
               </span>
             </div>
           )}
