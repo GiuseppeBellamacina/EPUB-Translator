@@ -1,7 +1,8 @@
 # Development config, mounted read-only at /config/config.yaml.
 # Providers are upserted by name on backend startup. API keys are read from the
 # mounted .env (names like OPENAI-API-KEY or OPENAI_API_KEY both work); a provider
-# whose api_key_env is missing is skipped. Remove the `providers:` key entirely to
+# whose api_key_env is missing is skipped. default_model is optional: the translate page
+# lists the models each provider serves. Remove the `providers:` key entirely to
 # auto-create providers from whatever known keys are present.
 
 providers:

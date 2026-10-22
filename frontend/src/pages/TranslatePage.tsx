@@ -23,6 +23,8 @@ import { useTranslationWs } from "../hooks/useTranslationWs";
 import { useStore } from "../stores/appStore";
 import { cn } from "../lib/utils";
 import { GlossaryEditor } from "../components/GlossaryEditor";
+import { ModelPicker } from "../components/ModelPicker";
+import { ModelCost } from "../components/CostEstimate";
 
 const inputClass =
   "w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0a0a0a] px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100 focus:border-transparent transition";
@@ -226,14 +228,26 @@ export function TranslatePage() {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                 Model
               </label>
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="gpt-4o-mini"
-                className={inputClass}
-                disabled={isRunning}
-              />
+              {selectedProvider !== null && (
+                <div className="space-y-1.5">
+                  <ModelPicker
+                    key={selectedProvider}
+                    providerId={selectedProvider}
+                    preferred={
+                      providers.find((p) => p.id === selectedProvider)?.default_model
+                    }
+                    value={model}
+                    onChange={setModel}
+                    className={inputClass}
+                    disabled={isRunning}
+                  />
+                  <ModelCost
+                    bookId={book.id}
+                    providerId={selectedProvider}
+                    model={model}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
