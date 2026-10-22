@@ -29,6 +29,14 @@ def _analysis_text(doc: Document) -> str:
     return next((t for t in texts if len(t) >= ANALYSIS_MIN_CHARS), max(texts, key=len, default=""))
 
 
+def _lead_context(doc: Document, index: int, pipeline: TranslationPipeline) -> str:
+    """Last blocks of the previous unit: PDF sentences often continue on the next page."""
+    if index == 0:
+        return ""
+    tail = doc.blocks(index - 1, pipeline.chunker)[-pipeline.chunker.overlap_blocks :]
+    return "\n\n".join(b.text for b in tail)
+
+
 async def translate_document(
     doc: Document,
     pipeline: TranslationPipeline,
@@ -89,7 +97,11 @@ async def translate_document(
                 translations: list[str | None] | None = None
                 failed: list[int] = []
                 async for event in pipeline.translate_chapter(
-                    doc.blocks(i, pipeline.chunker), i, total, previous.get(i)
+                    doc.blocks(i, pipeline.chunker),
+                    i,
+                    total,
+                    previous.get(i),
+                    lead_context=_lead_context(doc, i, pipeline),
                 ):
                     if event.event_type == "chapter_done":
                         translations = event.data["translated_blocks"]

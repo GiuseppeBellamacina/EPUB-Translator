@@ -60,6 +60,7 @@ class ChapterState(BaseModel):
     # Inputs
     chunks: list[Chunk]
     chapter_summary: str = ""
+    lead_context: str = ""  # end of the previous unit, context for the first chunk
     source_language: str = "english"
     target_language: str = "italian"
     style_instructions: str = ""
@@ -103,7 +104,8 @@ def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledState
             translations, new_terms = await translate_blocks(
                 llm,
                 [b.text for b in chunk.blocks],
-                context=chunk.context_text,
+                context=chunk.context_text
+                or (state.lead_context if state.chunk_index == 0 else ""),
                 chapter_summary=state.chapter_summary,
                 glossary=glossary.relevant(chunk.context_text + "\n" + chunk.text),
                 source_language=state.source_language,
@@ -359,6 +361,7 @@ class TranslationPipeline:
         chapter_index: int = 0,
         total_chapters: int = 1,
         previous: list[str | None] | None = None,
+        lead_context: str = "",
         chapter_summary: str = "",
     ) -> AsyncGenerator[TranslationProgress, None]:
         """
@@ -366,7 +369,8 @@ class TranslationPipeline:
 
         ``previous`` is the resume checkpoint (one entry per block, None = to do):
         chunks whose blocks are all translated are skipped. Chunking is deterministic,
-        so the same blocks always produce the same chunks.
+        so the same blocks always produce the same chunks. ``lead_context`` (the end
+        of the previous unit) is the context of the first chunk.
 
         Yields TranslationProgress events, including a ``chunk_done`` checkpoint per
         chunk. The final ``chapter_done`` event carries ``translated_blocks`` (one per
@@ -406,6 +410,7 @@ class TranslationPipeline:
                 pending=pending,
                 translated_blocks=translated,
                 chapter_summary=chapter_summary or self.book_summary,
+                lead_context=lead_context,
                 source_language=self.source_language,
                 target_language=self.target_language,
                 style_instructions=self.style_instructions,

@@ -78,7 +78,9 @@ export function HistoryPage() {
                     {book.filename}
                   </h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {book.total_chapters} chapters · {book.source_language} →{" "}
+                    {book.total_chapters}{" "}
+                    {book.filename.toLowerCase().endsWith(".pdf") ? "pages" : "chapters"} ·{" "}
+                    {book.source_language} →{" "}
                     {book.target_language}
                     {" · "}
                     {new Date(book.created_at).toLocaleDateString()}

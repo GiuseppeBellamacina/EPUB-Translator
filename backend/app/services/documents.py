@@ -56,6 +56,10 @@ class Document(ABC):
     def save(self, path: Path, translations: Translations) -> Path:
         """Write the translated document (same format as the input)."""
 
+    @abstractmethod
+    def info(self) -> dict:
+        """Metadata: ``title`` and ``language`` (best effort)."""
+
 
 class EpubDocument(Document):
     format = "epub"
@@ -96,11 +100,23 @@ class EpubDocument(Document):
         epub.write_epub(str(path), self.book)
         return path
 
+    def info(self) -> dict:
+        title = self.book.get_metadata("DC", "title")
+        language = self.book.get_metadata("DC", "language")
+        return {
+            "title": title[0][0] if title else "Unknown",
+            "language": language[0][0] if language else "english",
+        }
+
 
 def open_document(path: str | Path) -> Document:
     suffix = Path(path).suffix.lower()
     if suffix == ".epub":
         return EpubDocument(path)
+    if suffix == ".pdf":
+        from app.services.pdf_service import PdfDocument
+
+        return PdfDocument(path)
     raise ValueError(f"Unsupported document format: {suffix}")
 
 
