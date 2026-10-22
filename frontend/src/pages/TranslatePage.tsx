@@ -35,6 +35,33 @@ const ISO: Record<string, string> = {
 const languageName = (value: string | null | undefined, fallback: string) =>
   value ? (ISO[value.toLowerCase().split(/[-_]/)[0]] ?? value.toLowerCase()) : fallback;
 
+interface RunConfig {
+  providerId: number;
+  model: string;
+  enableReview: boolean;
+  reviewModel: string;
+  sourceLang: string;
+  targetLang: string;
+  style: string;
+}
+
+// shortcut: per browser; the server does not store the job's provider id or reviewer yet
+function loadConfig(bookId: number): RunConfig | null {
+  try {
+    return JSON.parse(localStorage.getItem(`translate-config-${bookId}`) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveConfig(bookId: number, config: RunConfig) {
+  try {
+    localStorage.setItem(`translate-config-${bookId}`, JSON.stringify(config));
+  } catch {
+    // private window: the page still works, it just forgets the choices
+  }
+}
+
 function LanguageSelect({
   label,
   value,
@@ -99,20 +126,47 @@ export function TranslatePage() {
         setGlossary(g);
         setProgress(prog);
         setEvents(prog.recent_events); // the recent log survives a page reload
-        if (p.length) setProviderId(p[0].id);
         setSourceLang(languageName(b.source_language, "english"));
         setTargetLang(languageName(b.target_language, "italian"));
+        // The last run's choices, so a running or paused job shows its own settings
+        const saved = loadConfig(id);
+        if (saved && p.some((x) => x.id === saved.providerId)) {
+          setProviderId(saved.providerId);
+          setModel(saved.model);
+          setEnableReview(saved.enableReview);
+          setReviewModel(saved.reviewModel);
+          setSourceLang(saved.sourceLang);
+          setTargetLang(saved.targetLang);
+          setStyle(saved.style);
+        } else if (p.length) setProviderId(p[0].id);
       },
     );
   }, [id, setEvents]);
 
-  // Poll the run state while a job is running (counts, in flight, ETA)
+  // Poll the run state while a job is running (counts, in flight, ETA). A job started
+  // before this page was opened sends its events elsewhere: take them from the poll.
   const running = isConnected || !!progress?.running;
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => api.getProgress(id).then(setProgress), 4000);
+    const timer = setInterval(
+      () =>
+        api.getProgress(id).then((prog) => {
+          setProgress(prog);
+          if (!isConnected) setEvents(prog.recent_events);
+          if (!prog.running && !isConnected) refresh();
+        }),
+      4000,
+    );
     return () => clearInterval(timer);
-  }, [running, id]);
+  }, [running, isConnected, id, setEvents, refresh]);
+
+  // New glossary terms appear in the side panel as they are found
+  const latest = events[0];
+  useEffect(() => {
+    if (latest?.event === "glossary_update" || latest?.event === "analysis_complete") {
+      api.getGlossary(id).then(setGlossary);
+    }
+  }, [latest, id]);
 
   useEffect(() => {
     if (providerId === null || !model) return;
@@ -160,6 +214,7 @@ export function TranslatePage() {
   const start = (restart = false) => {
     if (providerId === null) return;
     if (restart && !window.confirm("Discard all saved progress and translate the book from scratch?")) return;
+    saveConfig(id, { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style });
     startTranslation({
       bookId: id,
       providerId,
@@ -182,7 +237,7 @@ export function TranslatePage() {
         <>
           <StatusPill status={running ? "translating" : book.status} />
           {done > 0 && (
-            <Link to={`/preview/${id}`} className={buttonClass()}>
+            <Link to={`/preview/${id}?page=${done}`} className={buttonClass()}>
               <Eye className="h-4 w-4" aria-hidden="true" /> Preview
             </Link>
           )}
@@ -192,7 +247,10 @@ export function TranslatePage() {
             </a>
           )}
           {running ? (
-            <Button variant="primary" onClick={stopTranslation} disabled={!isConnected}>
+            <Button
+              variant="primary"
+              onClick={() => (isConnected ? stopTranslation() : api.stopTranslation(id))}
+            >
               <Pause className="h-4 w-4" aria-hidden="true" /> Pause
             </Button>
           ) : (
