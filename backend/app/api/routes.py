@@ -24,7 +24,6 @@ from app.api.schemas import (
     ProviderUpdate,
     TestConnectionRequest,
 )
-from app.api.websocket import active_jobs, recent_events, run_started
 from app.core.bootstrap import load_config
 from app.core.config import settings
 from app.core.encryption import decrypt_api_key, encrypt_api_key
@@ -37,12 +36,15 @@ from app.db.models import (
     ChapterStatus,
     GlossaryEntry,
     ProviderConfig,
+    QueueItem,
     TranslationJob,
 )
+from app.services import job_runner
 from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
+from app.services.job_runner import RunConfig, active_jobs, recent_events, run_started
 from app.services.model_catalog import list_models, price_for
 from app.services.pricing import ModelPrice, PriceTable, get_prices
 
@@ -302,6 +304,13 @@ async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
         "started_at": job.started_at.isoformat() if job and job.started_at else None,
         "eta_seconds": eta,
         "recent_events": list(reversed(recent_events.get(book_id, []))),
+        # settings of the last run (older jobs did not keep them), to show and resume with
+        "config": job.params if job and "provider_id" in (job.params or {}) else None,
+        "queue_status": await db.scalar(
+            select(QueueItem.status).where(
+                QueueItem.book_id == book_id, QueueItem.status.in_(("pending", "paused"))
+            )
+        ),
     }
 
 
@@ -440,3 +449,84 @@ async def add_glossary_entry(
     await db.commit()
     await db.refresh(new_entry)
     return new_entry
+
+
+# === QUEUE ===
+
+
+class QueueAdd(RunConfig):
+    book_ids: list[int]
+    keep_glossary: bool = False
+
+
+@router.get("/queue")
+async def get_queue(db: AsyncSession = Depends(get_db)):
+    """Queued books in order, with their status and progress."""
+    rows = await db.execute(
+        select(QueueItem, Book)
+        .join(Book, Book.id == QueueItem.book_id)
+        .order_by(QueueItem.position)
+    )
+    return {
+        "running": job_runner.queue_running(),
+        "items": [
+            {
+                "id": item.id,
+                "book_id": book.id,
+                "filename": book.filename,
+                "status": item.status,
+                "error": item.error,
+                "keep_glossary": item.keep_glossary,
+                "config": item.config,
+                "completed_units": book.translated_chapters or 0,
+                "total_units": book.total_chapters,
+            }
+            for item, book in rows.all()
+        ],
+    }
+
+
+@router.post("/queue")
+async def add_to_queue(data: QueueAdd):
+    """Append books (in the given order) and run the queue."""
+    config = RunConfig(**data.model_dump(exclude={"book_ids", "keep_glossary"}))
+    try:
+        items = await job_runner.enqueue(data.book_ids, config, data.keep_glossary)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"queued": len(items)}
+
+
+@router.post("/queue/start")
+async def start_queue():
+    job_runner.kick()
+    return {"running": True}
+
+
+@router.post("/queue/stop")
+async def stop_queue():
+    """Pause the running book; the rest of the queue waits for a start."""
+    job_runner.stop()
+    return {"running": False}
+
+
+@router.delete("/queue/{item_id}")
+async def remove_from_queue(item_id: int, db: AsyncSession = Depends(get_db)):
+    item = await db.get(QueueItem, item_id)
+    if not item:
+        raise HTTPException(404, "Not in the queue")
+    if item.status == "running":
+        raise HTTPException(409, "Pause the book before removing it")
+    await db.delete(item)
+    await db.commit()
+    return {"status": "removed"}
+
+
+@router.delete("/queue")
+async def clear_finished(db: AsyncSession = Depends(get_db)):
+    """Remove the books the queue has finished (done or failed)."""
+    rows = await db.execute(select(QueueItem).where(QueueItem.status.in_(("done", "failed"))))
+    for item in rows.scalars():
+        await db.delete(item)
+    await db.commit()
+    return {"status": "cleared"}

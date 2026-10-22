@@ -106,6 +106,22 @@ class TranslationJob(Base):
     book = relationship("Book", back_populates="translation_jobs")
 
 
+class QueueItem(Base):
+    """A book waiting to be translated; the queue runs one book at a time, by position."""
+
+    __tablename__ = "queue_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    book_id = Column(Integer, ForeignKey("books.id"), nullable=False)
+    position = Column(Integer, nullable=False)
+    config = Column(JSON, nullable=False)  # run settings, see job_runner.RunConfig
+    # start from the glossary of the book translated just before it in the queue
+    keep_glossary = Column(Boolean, default=False)
+    status = Column(String(20), default="pending")  # pending, running, paused, done, failed
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ProviderConfig(Base):
     __tablename__ = "provider_configs"
 

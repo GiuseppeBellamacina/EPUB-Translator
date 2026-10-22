@@ -6,6 +6,7 @@ from app.api.websocket import ws_router
 from app.core.bootstrap import bootstrap_providers, load_config
 from app.core.config import settings
 from app.db.database import async_session, init_db
+from app.services import job_runner
 from app.services.job_store import recover_interrupted_jobs
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
@@ -28,8 +29,14 @@ async def startup():
     settings.apply_overrides(load_config().get("translation") or {})
     await init_db()
     await recover_interrupted_jobs()
+    await job_runner.recover_queue()
     async with async_session() as db:
         await bootstrap_providers(db)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await job_runner.shutdown()  # the running book is paused with its progress saved
 
 
 @app.get("/health")
