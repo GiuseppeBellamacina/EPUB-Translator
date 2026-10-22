@@ -1,5 +1,5 @@
-import { useRef, useCallback, useState } from "react";
-import { useStore, type TranslationProgress } from "../stores/appStore";
+import { useCallback, useRef, useState } from "react";
+import type { JobEvent } from "../lib/api";
 
 interface TranslateOptions {
   bookId: number;
@@ -16,23 +16,20 @@ interface TranslateOptions {
   restart?: boolean;
 }
 
-export function useTranslationWs() {
+const MAX_EVENTS = 500;
+
+/** Runs a translation over the WebSocket; keeps its events, newest first. */
+export function useTranslationWs(onFinished?: () => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [logs, setLogs] = useState<TranslationProgress[]>([]);
-  const [liveText, setLiveText] = useState("");
-  const setTranslationProgress = useStore((s) => s.setTranslationProgress);
-  const updateBookStatus = useStore((s) => s.updateBookStatus);
+  const [events, setEvents] = useState<JobEvent[]>([]);
 
   const startTranslation = useCallback(
     (options: TranslateOptions) => {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws/translate/${options.bookId}`;
-
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/translate/${options.bookId}`);
       wsRef.current = ws;
-      setLogs([]);
-      setLiveText("");
+      setEvents([]);
 
       ws.onopen = () => {
         setIsConnected(true);
@@ -51,46 +48,18 @@ export function useTranslationWs() {
           }),
         );
       };
-
-      ws.onmessage = (event) => {
-        const data: TranslationProgress = JSON.parse(event.data);
-        setTranslationProgress(data);
-        setLogs((prev) => [...prev, data]);
-
-        const translated = data.data?.translated_text;
-        if (
-          (data.event === "chunk_translated" ||
-            data.event === "chunk_accepted") &&
-          typeof translated === "string"
-        ) {
-          setLiveText((prev) =>
-            prev ? prev + "\n\n" + translated : translated,
-          );
-        } else if (data.event === "chapter_start") {
-          setLiveText((prev) =>
-            prev ? prev + "\n\n\u2014\u2014\u2014\n\n" : prev,
-          );
-        }
-
-        if (data.event === "job_complete") {
-          const failed = (data.data?.failed_units as unknown[] | undefined) ?? [];
-          updateBookStatus(options.bookId, failed.length ? "failed" : "completed");
-        } else if (data.event === "cancelled") {
-          updateBookStatus(options.bookId, "paused");
-        }
+      ws.onmessage = (message) => {
+        const event: JobEvent = JSON.parse(message.data);
+        setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
       };
-
       ws.onclose = () => {
         setIsConnected(false);
-        setTranslationProgress(null);
         wsRef.current = null;
+        onFinished?.();
       };
-
-      ws.onerror = () => {
-        setIsConnected(false);
-      };
+      ws.onerror = () => setIsConnected(false);
     },
-    [setTranslationProgress, updateBookStatus],
+    [onFinished],
   );
 
   const stopTranslation = useCallback(() => {
@@ -99,16 +68,5 @@ export function useTranslationWs() {
     }
   }, []);
 
-  const disconnect = useCallback(() => {
-    wsRef.current?.close();
-  }, []);
-
-  return {
-    startTranslation,
-    stopTranslation,
-    disconnect,
-    isConnected,
-    logs,
-    liveText,
-  };
+  return { startTranslation, stopTranslation, isConnected, events, setEvents };
 }

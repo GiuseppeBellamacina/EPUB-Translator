@@ -1,466 +1,361 @@
-import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import {
-  Play,
-  Square,
-  Eye,
-  Download,
-  BookOpen,
-  Loader2,
-  Wand2,
-  Cpu,
-  Languages,
-  Activity,
-  RotateCcw,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
+import { Download, Eye, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import {
   api,
   type BookDetail,
-  type Provider,
+  type BookProgress,
   type GlossaryEntry,
+  type Provider,
 } from "../lib/api";
-import { useTranslationWs } from "../hooks/useTranslationWs";
-import { useStore } from "../stores/appStore";
+import { liveChunks } from "../lib/jobEvents";
+import { buttonClass, inputClass, labelClass } from "../lib/styles";
 import { cn } from "../lib/utils";
-import { GlossaryEditor } from "../components/GlossaryEditor";
-import { ModelPicker } from "../components/ModelPicker";
+import { useTranslationWs } from "../hooks/useTranslationWs";
+import { ActivityLog } from "../components/ActivityLog";
 import { ModelCost } from "../components/CostEstimate";
+import { GlossaryEditor } from "../components/GlossaryEditor";
+import { LiveView } from "../components/LiveView";
+import { ModelCombobox } from "../components/ModelCombobox";
+import { ProgressPanel } from "../components/ProgressPanel";
+import { ProviderSelect } from "../components/ProviderSelect";
+import { Button, Card, Heading, Page, StatusPill } from "../components/ui";
 
-const inputClass =
-  "w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0a0a0a] px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100 focus:border-transparent transition";
+const LANGUAGES = [
+  "english", "italian", "spanish", "french", "german", "portuguese", "dutch",
+  "polish", "russian", "japanese", "chinese", "korean",
+]; // fmt: off
+
+// EPUB metadata often carries ISO codes ("en", "it-IT")
+const ISO: Record<string, string> = {
+  en: "english", it: "italian", es: "spanish", fr: "french", de: "german", pt: "portuguese",
+  nl: "dutch", pl: "polish", ru: "russian", ja: "japanese", zh: "chinese", ko: "korean",
+}; // fmt: off
+const languageName = (value: string | null | undefined, fallback: string) =>
+  value ? (ISO[value.toLowerCase().split(/[-_]/)[0]] ?? value.toLowerCase()) : fallback;
+
+function LanguageSelect({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const options = LANGUAGES.includes(value) ? LANGUAGES : [value, ...LANGUAGES];
+  return (
+    <label className={labelClass}>
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className={cn(inputClass, "h-11 font-normal capitalize")}
+      >
+        {options.map((l) => (
+          <option key={l} value={l}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export function TranslatePage() {
   const { bookId } = useParams<{ bookId: string }>();
-  const navigate = useNavigate();
+  const id = Number(bookId);
   const [book, setBook] = useState<BookDetail | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState<number | null>(null);
+  const [progress, setProgress] = useState<BookProgress | null>(null);
+  const [providerId, setProviderId] = useState<number | null>(null);
   const [model, setModel] = useState("");
-  const [sourceLang, setSourceLang] = useState("english");
-  const [targetLang, setTargetLang] = useState("italian");
-  const [styleInstructions, setStyleInstructions] = useState("");
   const [enableReview, setEnableReview] = useState(true);
   const [reviewModel, setReviewModel] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [sourceLang, setSourceLang] = useState("english");
+  const [targetLang, setTargetLang] = useState("italian");
+  const [style, setStyle] = useState("");
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [totalCost, setTotalCost] = useState<{ with: number; without: number } | null>(null);
 
-  const { startTranslation, stopTranslation, isConnected, logs, liveText } =
-    useTranslationWs();
-  const progress = useStore((s) => s.translationProgress);
-  const liveRef = useRef<HTMLDivElement>(null);
+  const refresh = useCallback(() => {
+    api.getBook(id).then(setBook);
+    api.getProgress(id).then(setProgress);
+    api.getGlossary(id).then(setGlossary);
+  }, [id]);
+
+  const { startTranslation, stopTranslation, isConnected, events, setEvents } = useTranslationWs(refresh);
 
   useEffect(() => {
-    if (liveRef.current) {
-      liveRef.current.scrollTop = liveRef.current.scrollHeight;
-    }
-  }, [liveText]);
+    Promise.all([api.getBook(id), api.getProviders(), api.getGlossary(id), api.getProgress(id)]).then(
+      ([b, p, g, prog]) => {
+        setBook(b);
+        setProviders(p);
+        setGlossary(g);
+        setProgress(prog);
+        setEvents(prog.recent_events); // the recent log survives a page reload
+        if (p.length) setProviderId(p[0].id);
+        setSourceLang(languageName(b.source_language, "english"));
+        setTargetLang(languageName(b.target_language, "italian"));
+      },
+    );
+  }, [id, setEvents]);
+
+  // Poll the run state while a job is running (counts, in flight, ETA)
+  const running = isConnected || !!progress?.running;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => api.getProgress(id).then(setProgress), 4000);
+    return () => clearInterval(timer);
+  }, [running, id]);
 
   useEffect(() => {
-    if (!bookId) return;
-    const id = parseInt(bookId);
-    Promise.all([
-      api.getBook(id),
-      api.getProviders(),
-      api.getGlossary(id),
-    ]).then(([b, p, g]) => {
-      setBook(b);
-      setProviders(p);
-      setGlossary(g);
-      if (p.length > 0) {
-        setSelectedProvider(p[0].id);
-        setModel(p[0].default_model || "");
-      }
-      setSourceLang(b.source_language || "english");
-      setTargetLang(b.target_language || "italian");
-      setLoading(false);
-    });
-  }, [bookId]);
+    if (providerId === null || !model) return;
+    let current = true;
+    api
+      .getEstimate(id, { providerId, model })
+      .then((e) => {
+        const row = e.models[0];
+        if (current) setTotalCost(row ? { with: row.with_review.cost, without: row.without_review.cost } : null);
+      })
+      .catch(() => current && setTotalCost(null));
+    return () => {
+      current = false;
+    };
+  }, [id, providerId, model]);
 
-  // Refresh status/progress from the server when a run ends (completed, paused, failed)
-  const wasConnected = useRef(false);
-  useEffect(() => {
-    if (wasConnected.current && !isConnected && bookId) {
-      api.getBook(parseInt(bookId)).then(setBook);
-    }
-    wasConnected.current = isConnected;
-  }, [isConnected, bookId]);
+  const chunks = useMemo(() => liveChunks(events), [events]);
+  const provider = providers.find((p) => p.id === providerId) ?? null;
+  const loadModels = useCallback(
+    (refresh: boolean) =>
+      providerId === null ? Promise.resolve([]) : api.getProviderModels(providerId, refresh),
+    [providerId],
+  );
 
-  const handleStart = (restart = false) => {
-    if (!bookId || !selectedProvider) return;
-    if (
-      restart &&
-      !window.confirm(
-        "Discard all saved progress and translate the book from scratch?",
-      )
-    )
-      return;
+  if (!book) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-faint" aria-label="Loading" />
+      </div>
+    );
+  }
+
+  const isPdf = book.filename.toLowerCase().endsWith(".pdf");
+  const unitName = isPdf ? "pages" : "chapters";
+  const unitAbbr = isPdf ? "p." : "ch.";
+  const done = progress?.completed_units ?? book.translated_chapters;
+  const isCompleted = book.status === "completed";
+  const canResume = !isCompleted && done > 0;
+  const total = totalCost && (enableReview ? totalCost.with : totalCost.without);
+  const spent =
+    total !== null && total !== undefined && book.total_chapters
+      ? `$${((total * done) / book.total_chapters).toFixed(2)}`
+      : null;
+
+  const start = (restart = false) => {
+    if (providerId === null) return;
+    if (restart && !window.confirm("Discard all saved progress and translate the book from scratch?")) return;
     startTranslation({
-      bookId: parseInt(bookId),
-      providerId: selectedProvider,
+      bookId: id,
+      providerId,
+      model: model || undefined,
       sourceLanguage: sourceLang,
       targetLanguage: targetLang,
-      model: model || undefined,
-      styleInstructions: styleInstructions || undefined,
+      styleInstructions: style || undefined,
       enableReview,
       reviewModel: enableReview ? reviewModel : undefined,
       restart,
     });
   };
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-500 dark:text-slate-400" />
-      </div>
-    );
-  }
-
-  if (!book) return <div className="p-8">Book not found</div>;
-
-  const isRunning = isConnected;
-  const isCompleted =
-    book.status === "completed" ||
-    logs.some(
-      (l) =>
-        l.event === "job_complete" &&
-        !((l.data?.failed_units as unknown[] | undefined) ?? []).length,
-    );
-  const unitLabel = book.filename.toLowerCase().endsWith(".pdf")
-    ? "pages"
-    : "chapters";
-  // Chapters run concurrently: progress is the count of finished chapters
-  const finishedChapters = logs.length
-    ? logs.filter(
-        (l) => l.event === "chapter_saved" || l.event === "chapter_skipped",
-      ).length
-    : book.translated_chapters;
-  const chapterPct = book.total_chapters
-    ? (finishedChapters / book.total_chapters) * 100
-    : 0;
-  const canResume =
-    !isCompleted &&
-    (["paused", "failed", "translating"].includes(book.status) ||
-      book.translated_chapters > 0);
-
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#0a0a0a] px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-md bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-              <BookOpen className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate max-w-md">
-                {book.filename}
-              </h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
-                {book.total_chapters} {unitLabel}
-                <span className="text-gray-300 dark:text-gray-600">·</span>
-                <span className="capitalize">{sourceLang}</span>
-                <span className="text-gray-400">→</span>
-                <span className="capitalize">{targetLang}</span>
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            {isCompleted && (
-              <>
-                <button
-                  onClick={() => navigate(`/preview/${book.id}`)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900 text-sm font-medium transition-colors"
-                >
-                  <Eye className="w-4 h-4" /> Preview
-                </button>
-                <a
-                  href={api.downloadBook(book.id)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 text-sm font-medium transition-colors"
-                >
-                  <Download className="w-4 h-4" /> Download
-                </a>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
-        {/* Config panel */}
-        <div className="w-80 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#0a0a0a] overflow-auto">
-          <div className="p-6 space-y-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
-              <Cpu className="w-4 h-4 text-gray-400" /> Configuration
-            </h2>
-
-            {/* Provider selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                Provider
-              </label>
-              <select
-                value={selectedProvider || ""}
-                onChange={(e) => {
-                  const id = parseInt(e.target.value);
-                  setSelectedProvider(id);
-                  const p = providers.find((p) => p.id === id);
-                  if (p) setModel(p.default_model || "");
-                }}
-                className={inputClass}
-                disabled={isRunning}
-              >
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.provider_type})
-                  </option>
-                ))}
-              </select>
-              {providers.length === 0 && (
-                <p className="text-xs text-red-500 mt-1">
-                  No providers.{" "}
-                  <button
-                    onClick={() => navigate("/settings")}
-                    className="underline"
-                  >
-                    Add one
-                  </button>
-                </p>
+    <Page
+      wide
+      eyebrow={`${isPdf ? "PDF" : "EPUB"} · ${book.total_chapters} ${unitName} · ${sourceLang} to ${targetLang}`}
+      title={book.filename.replace(/\.(epub|pdf)$/i, "")}
+      actions={
+        <>
+          <StatusPill status={running ? "translating" : book.status} />
+          {done > 0 && (
+            <Link to={`/preview/${id}`} className={buttonClass()}>
+              <Eye className="h-4 w-4" aria-hidden="true" /> Preview
+            </Link>
+          )}
+          {isCompleted && !running && (
+            <a href={api.downloadBook(id)} className={buttonClass()}>
+              <Download className="h-4 w-4" aria-hidden="true" /> Download
+            </a>
+          )}
+          {running ? (
+            <Button variant="primary" onClick={stopTranslation} disabled={!isConnected}>
+              <Pause className="h-4 w-4" aria-hidden="true" /> Pause
+            </Button>
+          ) : (
+            <>
+              {(canResume || isCompleted) && (
+                <Button onClick={() => start(true)} disabled={providerId === null}>
+                  <RotateCcw className="h-4 w-4" aria-hidden="true" /> Start over
+                </Button>
               )}
-            </div>
+              {!isCompleted && (
+                <Button variant="primary" onClick={() => start(false)} disabled={providerId === null}>
+                  <Play className="h-4 w-4" aria-hidden="true" />
+                  {canResume ? `Resume (${done}/${book.total_chapters})` : "Start translation"}
+                </Button>
+              )}
+            </>
+          )}
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-start gap-5">
+        <Card aria-labelledby="config-title" className="flex w-full flex-col gap-5 p-5 lg:max-w-sm">
+          <Heading id="config-title">Configuration</Heading>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                Model
-              </label>
-              {selectedProvider !== null && (
-                <div className="space-y-1.5">
-                  <ModelPicker
-                    key={selectedProvider}
-                    providerId={selectedProvider}
-                    preferred={
-                      providers.find((p) => p.id === selectedProvider)?.default_model
-                    }
-                    value={model}
-                    onChange={setModel}
-                    className={inputClass}
-                    disabled={isRunning}
-                  />
-                  <ModelCost
-                    bookId={book.id}
-                    providerId={selectedProvider}
-                    model={model}
-                  />
+          {providers.length === 0 ? (
+            <p className="m-0 text-sm text-muted">
+              No providers yet. <Link to="/providers">Add one</Link> to start.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Provider</span>
+                <ProviderSelect
+                  providers={providers}
+                  value={providerId}
+                  onChange={(pid) => {
+                    setProviderId(pid);
+                    setModel("");
+                    setReviewModel("");
+                  }}
+                  disabled={running}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Translation model</span>
+                <ModelCombobox
+                  key={`model-${providerId}`}
+                  label="Translation model"
+                  load={loadModels}
+                  loadKey={`model-${providerId}`}
+                  value={model}
+                  onChange={setModel}
+                  preferred={provider?.default_model}
+                  providerType={provider?.provider_type}
+                  baseUrl={provider?.base_url}
+                  disabled={running}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Reviewer</span>
+                  <label className="inline-flex items-center gap-2 text-sm text-muted">
+                    <input
+                      type="checkbox"
+                      checked={enableReview}
+                      onChange={(e) => setEnableReview(e.target.checked)}
+                      disabled={running}
+                      className="h-4.5 w-4.5 accent-accent"
+                    />
+                    Review each chunk
+                  </label>
                 </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                  From
-                </label>
-                <input
-                  type="text"
-                  value={sourceLang}
-                  onChange={(e) => setSourceLang(e.target.value)}
-                  className={inputClass}
-                  disabled={isRunning}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                  To
-                </label>
-                <input
-                  type="text"
-                  value={targetLang}
-                  onChange={(e) => setTargetLang(e.target.value)}
-                  className={inputClass}
-                  disabled={isRunning}
-                />
-              </div>
-            </div>
-
-            {/* Review */}
-            <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                <input
-                  type="checkbox"
-                  checked={enableReview}
-                  onChange={(e) => setEnableReview(e.target.checked)}
-                  disabled={isRunning}
-                  className="rounded border-gray-300 dark:border-gray-700"
-                />
-                Review each chunk
-              </label>
-              {enableReview && selectedProvider !== null && (
-                <div className="space-y-1">
-                  <ModelPicker
-                    key={`review-${selectedProvider}`}
-                    providerId={selectedProvider}
-                    preferred={model}
+                {enableReview ? (
+                  <ModelCombobox
+                    key={`review-${providerId}`}
+                    label="Reviewer model"
+                    load={loadModels}
+                    loadKey={`review-${providerId}`}
                     value={reviewModel}
                     onChange={setReviewModel}
-                    className={inputClass}
-                    disabled={isRunning}
+                    autoSelect={false}
+                    emptyLabel={`Same as translation model${model ? ` (${model})` : ""}`}
+                    providerType={provider?.provider_type}
+                    baseUrl={provider?.base_url}
+                    hint="Flags major issues only; a stronger model than the translator works best"
+                    disabled={running}
                   />
-                  <p className="text-[11px] text-gray-400">
-                    Reviewer model. Small models are poor judges of their own
-                    output: e.g. translate with a nano model, review with a
-                    mini one.
-                  </p>
-                </div>
-              )}
-            </div>
+                ) : (
+                  <p className="m-0 text-xs text-faint">Faster and cheaper; no second opinion on each chunk.</p>
+                )}
+              </div>
+            </>
+          )}
 
-            {/* Style instructions */}
+          <div className="grid grid-cols-2 gap-3">
+            <LanguageSelect label="From" value={sourceLang} onChange={setSourceLang} disabled={running} />
+            <LanguageSelect label="To" value={targetLang} onChange={setTargetLang} disabled={running} />
+          </div>
+
+          <label className={labelClass}>
+            Style
+            <textarea
+              rows={3}
+              value={style}
+              onChange={(e) => setStyle(e.target.value)}
+              placeholder="E.g. informal dialogue, keep honorifics"
+              disabled={running}
+              className={cn(inputClass, "resize-none py-2.5 font-normal")}
+            />
+          </label>
+
+          <div className="flex items-center justify-between rounded-md bg-tint p-3.5">
             <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                <Wand2 className="w-4 h-4 text-gray-400" /> Style instructions
-              </label>
-              <textarea
-                value={styleInstructions}
-                onChange={(e) => setStyleInstructions(e.target.value)}
-                placeholder="E.g. informal tone, keep a poetic register…"
-                rows={3}
-                className={cn(inputClass, "resize-none leading-relaxed")}
-                disabled={isRunning}
-              />
-              <p className="text-[11px] text-gray-400 mt-1">
-                Free-form guidance on tone, register and style, applied to every
-                chapter.
-              </p>
+              <div className="font-semibold">Glossary</div>
+              <div className="text-[13px] text-muted">{glossary.length} terms</div>
             </div>
-
-            {/* Glossary editor */}
-            <div className="pt-1 border-t border-gray-200 dark:border-gray-800">
-              <div className="pt-4">
-                <GlossaryEditor
-                  bookId={parseInt(bookId!)}
-                  initial={glossary}
-                  disabled={isRunning}
-                />
-              </div>
-            </div>
-
-            {/* Start/Stop button */}
-            <div className="pt-2">
-              {!isRunning ? (
-                <div className="space-y-2">
-                  <button
-                    onClick={() => handleStart(false)}
-                    disabled={!selectedProvider || isCompleted}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Play className="w-4 h-4" />
-                    {isCompleted
-                      ? "Translation completed"
-                      : canResume
-                        ? `Resume translation (${book.translated_chapters}/${book.total_chapters})`
-                        : "Start translation"}
-                  </button>
-                  {(canResume || isCompleted) && (
-                    <button
-                      onClick={() => handleStart(true)}
-                      disabled={!selectedProvider}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-50"
-                    >
-                      <RotateCcw className="w-4 h-4" /> Start over from scratch
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={stopTranslation}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-red-600 text-white font-medium hover:bg-red-700 transition-colors"
-                >
-                  <Square className="w-4 h-4" /> Stop
-                </button>
-              )}
-            </div>
+            <Button size="sm" onClick={() => setGlossaryOpen(true)}>
+              {running ? "View" : "Edit"}
+            </Button>
           </div>
-        </div>
 
-        {/* Progress / Live / Logs panel */}
-        <div className="flex-1 p-6 overflow-auto">
-          {/* Progress bar */}
-          {progress && (
-            <div className="mb-6 rounded-lg surface p-4 animate-fade-in-up">
-              <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300 mb-3">
-                <span className="font-medium">
-                  {finishedChapters} / {book.total_chapters} {unitLabel} done
-                </span>
-                {progress.total_chunks > 0 && (
-                  <span className="text-gray-400">
-                    Chunk {(progress.chunk_index || 0) + 1} /{" "}
-                    {progress.total_chunks}
-                  </span>
-                )}
-              </div>
-              <div className="w-full bg-gray-100 dark:bg-gray-900 rounded-full h-1.5 overflow-hidden">
-                <div
-                  className="h-1.5 rounded-full bg-gray-900 dark:bg-white transition-all duration-500"
-                  style={{ width: `${chapterPct}%` }}
-                />
-              </div>
+          {providerId !== null && model && (
+            <div className="flex items-center justify-between border-t border-line pt-3.5">
+              <span className="text-muted">Estimated total</span>
+              <span className="font-serif text-xl">
+                <ModelCost bookId={id} providerId={providerId} model={model} withReview={enableReview} />
+              </span>
             </div>
           )}
+        </Card>
 
-          {/* Live translation */}
-          {(isRunning || liveText) && (
-            <div className="mb-6">
-              <h3 className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                <Languages className="w-4 h-4 text-gray-400" /> Live translation
-              </h3>
-              <div
-                ref={liveRef}
-                className="surface rounded-lg p-5 max-h-[40vh] overflow-auto whitespace-pre-wrap text-sm leading-relaxed text-gray-800 dark:text-gray-200"
-              >
-                {liveText || (
-                  <span className="text-gray-400 italic">
-                    Translated text will stream here as each chunk completes…
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Log messages */}
-          <div>
-            <h3 className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-              <Activity className="w-4 h-4 text-gray-400" /> Activity log
-            </h3>
-            {logs.length === 0 && (
-              <div className="flex flex-col items-center justify-center text-center py-16 rounded-lg border border-dashed border-gray-300 dark:border-gray-700">
-                <Languages className="w-9 h-9 text-gray-300 dark:text-gray-600 mb-3" />
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Configure the settings and start the translation
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Progress will appear here in real time.
-                </p>
-              </div>
-            )}
-            <div className="space-y-2">
-              {logs.map((log, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "px-4 py-2.5 rounded-md text-sm border",
-                    log.event === "error"
-                      ? "bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-900 text-red-700 dark:text-red-300"
-                      : log.event === "job_complete"
-                        ? "bg-gray-900 dark:bg-white border-gray-900 dark:border-white text-white dark:text-gray-900"
-                        : "bg-white dark:bg-[#0a0a0a] border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300",
-                  )}
-                >
-                  {log.message}
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
+          <ProgressPanel progress={progress} unitName={unitName} unitAbbr={unitAbbr} spent={spent} />
+          <LiveView chunks={chunks} unitName={isPdf ? "Page" : "Chapter"} targetLanguage={targetLang} />
+          <ActivityLog events={events} unitAbbr={unitAbbr} />
         </div>
       </div>
-    </div>
+
+      <Dialog open={glossaryOpen} onClose={() => setGlossaryOpen(false)} className="relative z-50">
+        <div className="fixed inset-0 bg-ink/35" aria-hidden="true" />
+        <div className="fixed inset-0 flex items-start justify-center overflow-auto p-4 pt-16">
+          <DialogPanel className="w-full max-w-2xl rounded-lg bg-surface p-6 shadow-[0_24px_60px_rgba(27,36,51,0.18)]">
+            <div className="mb-4 flex items-baseline justify-between gap-3">
+              <DialogTitle className="m-0 font-serif text-[26px] font-medium">Glossary</DialogTitle>
+              <Button size="sm" variant="ghost" onClick={() => setGlossaryOpen(false)}>
+                Close
+              </Button>
+            </div>
+            <p className="mb-4 mt-0 text-sm text-muted">
+              Terms the translation must follow. New recurring names are added automatically while
+              translating; your edits are never overwritten.
+            </p>
+            <GlossaryEditor
+              bookId={id}
+              initial={glossary}
+              disabled={running}
+              onSaved={() => api.getGlossary(id).then(setGlossary)}
+            />
+          </DialogPanel>
+        </div>
+      </Dialog>
+    </Page>
   );
 }

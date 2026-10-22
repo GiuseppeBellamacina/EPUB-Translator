@@ -141,7 +141,8 @@ def build_chapter_graph(
                 "chunk_index": state.chunk_index,
                 "total_chunks": total,
                 "message": f"Chunk {state.chunk_index + 1}/{total} translated",
-                "data": {"translated_text": "\n\n".join(translations)},
+                # source text too: the UI shows original and translation side by side
+                "data": {"translated_text": "\n\n".join(translations), "source_text": chunk.text},
             }
         )
         return {
