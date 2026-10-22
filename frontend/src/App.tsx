@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { UploadPage } from "./pages/UploadPage";
 import { TranslatePage } from "./pages/TranslatePage";
@@ -14,8 +14,11 @@ export default function App() {
           <Route path="/" element={<UploadPage />} />
           <Route path="/translate/:bookId" element={<TranslatePage />} />
           <Route path="/preview/:bookId" element={<PreviewPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/library" element={<HistoryPage />} />
+          <Route path="/providers" element={<SettingsPage />} />
+          {/* old addresses */}
+          <Route path="/history" element={<Navigate to="/library" replace />} />
+          <Route path="/settings" element={<Navigate to="/providers" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

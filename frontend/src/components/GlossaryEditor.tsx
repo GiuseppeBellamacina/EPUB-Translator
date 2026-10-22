@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Plus, Trash2, Save, Check, Loader2, BookMarked } from "lucide-react";
+import { Check, Loader2, Plus, Trash2 } from "lucide-react";
 import { api, type GlossaryEntry } from "../lib/api";
+import { inputClass } from "../lib/styles";
 import { cn } from "../lib/utils";
+import { Button } from "./ui";
 
 interface EditableEntry {
   source_term: string;
@@ -13,13 +15,10 @@ interface GlossaryEditorProps {
   bookId: number;
   initial: GlossaryEntry[];
   disabled?: boolean;
+  onSaved?: (count: number) => void;
 }
 
-export function GlossaryEditor({
-  bookId,
-  initial,
-  disabled,
-}: GlossaryEditorProps) {
+export function GlossaryEditor({ bookId, initial, disabled, onSaved }: GlossaryEditorProps) {
   const [entries, setEntries] = useState<EditableEntry[]>(() =>
     initial.map((g) => ({
       source_term: g.source_term,
@@ -29,151 +28,128 @@ export function GlossaryEditor({
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const markDirty = () => setSaved(false);
-
-  const updateEntry = (index: number, patch: Partial<EditableEntry>) => {
-    setEntries((prev) =>
-      prev.map((e, i) => (i === index ? { ...e, ...patch } : e)),
-    );
-    markDirty();
-  };
-
-  const addEntry = () => {
-    setEntries((prev) => [
-      ...prev,
-      { source_term: "", target_term: "", do_not_translate: false },
-    ]);
-    markDirty();
-  };
-
-  const removeEntry = (index: number) => {
-    setEntries((prev) => prev.filter((_, i) => i !== index));
-    markDirty();
+  const update = (index: number, patch: Partial<EditableEntry>) => {
+    setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch } : e)));
+    setSaved(false);
   };
 
   const handleSave = async () => {
     setSaving(true);
+    setError(null);
     try {
       const clean = entries
         .map((e) => ({
           source_term: e.source_term.trim(),
-          target_term: e.target_term.trim(),
+          target_term: e.do_not_translate ? e.source_term.trim() : e.target_term.trim(),
           do_not_translate: e.do_not_translate,
         }))
         .filter((e) => e.source_term.length > 0);
       await api.updateGlossary(bookId, clean);
       setEntries(clean);
       setSaved(true);
+      onSaved?.(clean.length);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to save glossary");
+      setError(err instanceof Error ? err.message : "Failed to save the glossary");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-          <BookMarked className="w-4 h-4 text-gray-400" />
-          Glossary
-          <span className="text-xs text-gray-400 font-normal">
-            ({entries.length})
-          </span>
-        </label>
-        <button
-          type="button"
-          onClick={addEntry}
-          disabled={disabled}
-          className="flex items-center gap-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-40"
-        >
-          <Plus className="w-3.5 h-3.5" /> Add
-        </button>
-      </div>
-
-      <div className="space-y-2 max-h-64 overflow-auto pr-1">
-        {entries.length === 0 && (
-          <p className="text-xs text-gray-400 italic py-2">
-            No terms yet. Add key terms for a consistent translation.
+    <div className="flex flex-col gap-3">
+      <div className="max-h-[50vh] overflow-auto rounded-md border border-line">
+        {entries.length === 0 ? (
+          <p className="m-0 p-4 text-sm text-faint">
+            No terms yet. Add names and recurring terms for a consistent translation.
           </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-surface">
+              <tr className="border-b border-line text-left text-xs text-faint">
+                <th className="px-3 py-2 font-medium">Term</th>
+                <th className="px-3 py-2 font-medium">Translation</th>
+                <th className="px-3 py-2 font-medium">Keep as is</th>
+                <th className="px-3 py-2">
+                  <span className="sr-only">Remove</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, i) => (
+                <tr key={i} className="border-b border-line last:border-0">
+                  <td className="px-3 py-1.5">
+                    <input
+                      value={entry.source_term}
+                      onChange={(e) => update(i, { source_term: e.target.value })}
+                      aria-label={`Term ${i + 1}`}
+                      disabled={disabled}
+                      className={cn(inputClass, "h-9")}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      value={entry.do_not_translate ? entry.source_term : entry.target_term}
+                      onChange={(e) => update(i, { target_term: e.target.value })}
+                      aria-label={`Translation of term ${i + 1}`}
+                      disabled={disabled || entry.do_not_translate}
+                      className={cn(inputClass, "h-9")}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={entry.do_not_translate}
+                      onChange={(e) => update(i, { do_not_translate: e.target.checked })}
+                      aria-label={`Keep term ${i + 1} unchanged`}
+                      disabled={disabled}
+                      className="h-4.5 w-4.5 accent-accent"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEntries((prev) => prev.filter((_, j) => j !== i));
+                        setSaved(false);
+                      }}
+                      disabled={disabled}
+                      aria-label={`Remove term ${i + 1}`}
+                      className="rounded-full p-2 text-faint hover:bg-danger-soft hover:text-danger disabled:opacity-40"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
-        {entries.map((entry, i) => (
-          <div
-            key={i}
-            className="group rounded-md border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 p-2 space-y-1.5"
-          >
-            <div className="flex items-center gap-1.5">
-              <input
-                value={entry.source_term}
-                onChange={(e) =>
-                  updateEntry(i, { source_term: e.target.value })
-                }
-                placeholder="Source term"
-                disabled={disabled}
-                className="flex-1 min-w-0 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0a0a0a] px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100"
-              />
-              <span className="text-gray-300 dark:text-gray-600 text-xs">
-                →
-              </span>
-              <input
-                value={entry.target_term}
-                onChange={(e) =>
-                  updateEntry(i, { target_term: e.target.value })
-                }
-                placeholder={
-                  entry.do_not_translate ? "(unchanged)" : "Translation"
-                }
-                disabled={disabled || entry.do_not_translate}
-                className="flex-1 min-w-0 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0a0a0a] px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100 disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={() => removeEntry(i)}
-                disabled={disabled}
-                className="p-1.5 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors disabled:opacity-40"
-                title="Remove"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <label className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={entry.do_not_translate}
-                onChange={(e) =>
-                  updateEntry(i, { do_not_translate: e.target.checked })
-                }
-                disabled={disabled}
-                className="rounded border-gray-300 text-gray-900 focus:ring-gray-900/40"
-              />
-              Do not translate (keep unchanged)
-            </label>
-          </div>
-        ))}
       </div>
 
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={disabled || saving}
-        className={cn(
-          "mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors",
-          saved
-            ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
-            : "bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800",
-          "disabled:opacity-50",
-        )}
-      >
-        {saving ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-        ) : saved ? (
-          <Check className="w-3.5 h-3.5" />
-        ) : (
-          <Save className="w-3.5 h-3.5" />
-        )}
-        {saved ? "Glossary saved" : "Save glossary"}
-      </button>
+      {error && <p className="m-0 text-sm text-danger">{error}</p>}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button
+          size="sm"
+          disabled={disabled}
+          onClick={() => {
+            setEntries((prev) => [...prev, { source_term: "", target_term: "", do_not_translate: false }]);
+            setSaved(false);
+          }}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" /> Add term
+        </Button>
+        <Button size="sm" variant="primary" onClick={handleSave} disabled={disabled || saving}>
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : saved ? (
+            <Check className="h-4 w-4" aria-hidden="true" />
+          ) : null}
+          {saved ? "Saved" : `Save ${entries.length} terms`}
+        </Button>
+      </div>
     </div>
   );
 }

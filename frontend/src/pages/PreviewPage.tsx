@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { api, type Preview } from "../lib/api";
+import { Button } from "../components/ui";
 
 export function PreviewPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -13,96 +14,66 @@ export function PreviewPage() {
   useEffect(() => {
     if (!bookId) return;
     let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const p = await api.getPreview(parseInt(bookId), chapterIndex);
-        if (!cancelled) setPreview(p);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
+    api
+      .getPreview(parseInt(bookId), chapterIndex)
+      .then((p) => !cancelled && setPreview(p))
+      .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
   }, [bookId, chapterIndex]);
 
-  if (loading) {
+  if (loading && !preview) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-faint" aria-label="Loading" />
       </div>
     );
   }
+  if (!preview) return <div className="p-8 text-muted">Preview not available.</div>;
 
-  if (!preview) return <div className="p-8">Preview not available</div>;
+  const step = (delta: number) => {
+    setLoading(true);
+    setChapterIndex((i) => Math.min(preview.total_chapters - 1, Math.max(0, i + delta)));
+  };
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Navigation */}
-      <div className="border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex items-center justify-between">
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </button>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setChapterIndex(Math.max(0, chapterIndex - 1))}
-            disabled={chapterIndex === 0}
-            className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-30 transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-28 text-center">
-            Chapter {chapterIndex + 1} / {preview.total_chapters}
+    <div className="mx-auto flex h-full max-w-350 flex-col gap-4 px-4 py-6 sm:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button size="sm" variant="ghost" onClick={() => navigate(-1)}>
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => step(-1)} disabled={chapterIndex === 0} aria-label="Previous">
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </Button>
+          <span className="min-w-28 text-center text-sm text-muted">
+            {chapterIndex + 1} of {preview.total_chapters}
           </span>
-          <button
-            onClick={() =>
-              setChapterIndex(
-                Math.min(preview.total_chapters - 1, chapterIndex + 1),
-              )
-            }
+          <Button
+            size="sm"
+            onClick={() => step(1)}
             disabled={chapterIndex >= preview.total_chapters - 1}
-            className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-30 transition-colors"
+            aria-label="Next"
           >
-            <ChevronRight className="w-5 h-5" />
-          </button>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </Button>
         </div>
       </div>
 
-      {/* Side by side */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Original */}
-        <div className="flex-1 border-r border-gray-200 dark:border-gray-800 overflow-auto">
-          <div className="p-6">
-            <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-              Original
-            </h3>
-            <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-gray-800 dark:text-gray-200 leading-relaxed">
-              {preview.original_text}
-            </div>
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-md border border-line bg-surface md:grid-cols-2">
+        <section className="overflow-auto border-b border-line p-6 md:border-b-0 md:border-r">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.14em] text-faint">Original</div>
+          <div className="whitespace-pre-wrap font-serif text-[17px] leading-relaxed text-muted">
+            {preview.original_text}
           </div>
-        </div>
-
-        {/* Translated */}
-        <div className="flex-1 overflow-auto">
-          <div className="p-6">
-            <h3 className="text-xs font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider mb-3">
-              Translated
-            </h3>
-            <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-gray-800 dark:text-gray-200 leading-relaxed">
-              {preview.translated_text || (
-                <p className="italic text-gray-400">
-                  Translation not available yet
-                </p>
-              )}
-            </div>
+        </section>
+        <section className="overflow-auto p-6">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.14em] text-accent">Translation</div>
+          <div className="whitespace-pre-wrap font-serif text-[17px] leading-relaxed text-ink">
+            {preview.translated_text || <span className="italic text-faint">Not translated yet.</span>}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

@@ -1,33 +1,24 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { Upload, History, Settings, Languages } from "lucide-react";
+import { BookOpen, Server, Upload } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 
 const navItems = [
   { to: "/", icon: Upload, label: "Upload" },
-  { to: "/history", icon: History, label: "History" },
-  { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/library", icon: BookOpen, label: "Library" },
+  { to: "/providers", icon: Server, label: "Providers" },
 ];
 
 export function Layout() {
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-60 bg-white dark:bg-[#0a0a0a] border-r border-gray-200 dark:border-gray-800 flex flex-col">
-        {/* Logo */}
-        <div className="px-5 py-5 border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-md bg-gray-900 dark:bg-white flex items-center justify-center">
-              <Languages className="w-4 h-4 text-white dark:text-gray-900" />
-            </div>
-            <h1 className="font-semibold text-gray-900 dark:text-gray-100 text-[15px] tracking-tight">
-              EPUB Translator
-            </h1>
-          </div>
+    <div className="flex min-h-screen flex-col bg-paper md:h-screen md:flex-row md:overflow-hidden">
+      <aside className="flex shrink-0 flex-col border-b border-line bg-surface md:w-58 md:border-b-0 md:border-r">
+        <div className="flex items-center justify-between px-6 pb-3 pt-5 md:pb-6">
+          <span className="font-serif text-[22px] font-semibold text-ink">Translator</span>
+          <ThemeToggle className="md:hidden" />
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-0.5">
+        <nav aria-label="Main" className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-1 md:flex-col md:pb-0">
           {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
@@ -35,32 +26,24 @@ export function Layout() {
               end={to === "/"}
               className={({ isActive }) =>
                 cn(
-                  "group flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                  isActive
-                    ? "text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-900"
-                    : "text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-900/60 hover:text-gray-900 dark:hover:text-gray-200",
+                  "flex shrink-0 items-center gap-2.5 rounded-full px-3.5 py-2.5 text-sm transition-colors",
+                  isActive ? "bg-ink font-semibold text-on-ink" : "text-muted hover:bg-tint hover:text-ink",
                 )
               }
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="h-4.5 w-4.5" strokeWidth={1.8} aria-hidden="true" />
               {label}
             </NavLink>
           ))}
         </nav>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-gray-200 dark:border-gray-800">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              Theme
-            </span>
-            <ThemeToggle />
-          </div>
+        <div className="hidden items-center justify-between border-t border-line px-6 py-4 md:flex">
+          <span className="text-xs text-faint">Theme</span>
+          <ThemeToggle />
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="min-w-0 flex-1 md:overflow-auto">
         <Outlet />
       </main>
     </div>
