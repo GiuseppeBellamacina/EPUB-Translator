@@ -46,9 +46,17 @@ docker compose up --build
 
 Frontend at http://localhost:3000, Backend at http://localhost:8000
 
+### Providers from `.env` and `config.yaml`
+
+Put API keys in a repo-root `.env` (see `.env.example`; `OPENAI-API-KEY` style names work too).
+On startup the backend upserts the providers declared in `config.yaml`, skipping any whose key
+is missing. Without a `providers:` section it creates one provider per known key
+(OpenAI, OpenRouter, Anthropic). The default `config.yaml` sets up `openrouter-free`,
+`openai-cheap` (`gpt-4.1-nano`) and the offline `fake` provider.
+
 ## Usage
 
-1. **Settings** → Add an LLM provider (OpenAI API key, Ollama URL, etc.)
+1. **Settings** → Providers from `config.yaml` are already there; add more if needed (OpenAI API key, Ollama URL, etc.)
 2. **Upload** → Drag & drop your EPUB file
 3. **Configure** → Select provider, model, languages
 4. **Translate** → Watch real-time progress, edit glossary if needed

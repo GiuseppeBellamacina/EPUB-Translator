@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Encryption key for API keys stored in DB
     encryption_key: str = ""
 
+    # Provider bootstrap: .env with API keys (mounted as a file) and the dev config.yaml
+    env_file: Path | None = None
+    config_file: Path = Path("/config/config.yaml")
+
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
