@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { api, type Preview } from "../lib/api";
 import { Button } from "../components/ui";
@@ -8,7 +8,9 @@ export function PreviewPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const navigate = useNavigate();
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [chapterIndex, setChapterIndex] = useState(0);
+  const [searchParams] = useSearchParams();
+  // ?page= is 1-based (the translate page links to the last translated one)
+  const [chapterIndex, setChapterIndex] = useState(() => Math.max(0, Number(searchParams.get("page") || 1) - 1));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -47,9 +49,23 @@ export function PreviewPage() {
           <Button size="sm" onClick={() => step(-1)} disabled={chapterIndex === 0} aria-label="Previous">
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Button>
-          <span className="min-w-28 text-center text-sm text-muted">
-            {chapterIndex + 1} of {preview.total_chapters}
-          </span>
+          <label className="flex items-center gap-1.5 text-sm text-muted">
+            <input
+              key={chapterIndex}
+              type="number"
+              min={1}
+              max={preview.total_chapters}
+              defaultValue={chapterIndex + 1}
+              aria-label="Go to"
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              onBlur={(e) => {
+                const delta = Number(e.target.value) - 1 - chapterIndex;
+                if (delta) step(delta);
+              }}
+              className="h-8 w-16 rounded-md border border-line bg-surface px-2 text-center text-ink"
+            />
+            of {preview.total_chapters}
+          </label>
           <Button
             size="sm"
             onClick={() => step(1)}
@@ -65,7 +81,7 @@ export function PreviewPage() {
         <section className="overflow-auto border-b border-line p-6 md:border-b-0 md:border-r">
           <div className="mb-3 text-[11px] uppercase tracking-[0.14em] text-faint">Original</div>
           <div className="whitespace-pre-wrap font-serif text-[17px] leading-relaxed text-muted">
-            {preview.original_text}
+            {preview.original_text || <span className="italic text-faint">No text on this page.</span>}
           </div>
         </section>
         <section className="overflow-auto p-6">

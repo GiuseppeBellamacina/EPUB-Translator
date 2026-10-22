@@ -88,6 +88,9 @@ export const api = {
       `/providers/${providerId}/models${refresh ? "?refresh=true" : ""}`,
     ),
   getProgress: (bookId: number) => request<BookProgress>(`/books/${bookId}/progress`),
+  /** Pause a running job that this page is not connected to (e.g. after navigating away). */
+  stopTranslation: (bookId: number) =>
+    request<{ status: string }>(`/translate/${bookId}/stop`, { method: "POST" }),
 
   // Glossary
   getGlossary: (bookId: number) =>
