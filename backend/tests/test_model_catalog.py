@@ -148,3 +148,45 @@ def test_list_models_for_an_unsaved_provider(db, monkeypatch):
         assert [m["id"] for m in ok.json()] == ["gpt-4.1-nano"]
         bad = client.post("/api/providers/models", json={"provider_type": "nope"})
         assert bad.status_code == 502 and "Could not list models" in bad.json()["detail"]
+
+
+async def test_ollama_unreachable_gives_a_readable_error(monkeypatch):
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        model_catalog.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(refuse), **kw),
+    )
+    with pytest.raises(
+        ConnectionError, match="Ollama is not running at http://host.docker.internal:11434"
+    ):
+        await list_models("ollama", None, None, PRICES)
+
+
+async def test_ollama_lists_local_models(monkeypatch):
+    seen = []
+
+    def tags(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"models": [{"name": "llama3.2:3b"}]})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        model_catalog.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(tags), **kw),
+    )
+    models = await list_models("ollama", None, "http://gpu-box:11434", PRICES)
+    assert [m["id"] for m in models] == ["llama3.2:3b"]
+    assert seen == ["http://gpu-box:11434/api/tags"]
+
+
+def test_ollama_chat_model_uses_the_host_url_by_default():
+    from app.core.llm_factory import LLMConfig, create_llm
+
+    assert create_llm(LLMConfig(provider="ollama", model="llama3.2")).base_url == (
+        "http://host.docker.internal:11434"
+    )

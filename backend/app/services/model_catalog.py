@@ -15,6 +15,7 @@ import httpx
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
+from app.core.config import settings
 from app.services.pricing import ModelPrice, PriceTable
 
 CACHE_TTL = 600
@@ -98,9 +99,13 @@ async def _fetch(
                 options.append(option)
             return options
         case "ollama":
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{base_url or 'http://localhost:11434'}/api/tags")
-                response.raise_for_status()
+            url = base_url or settings.ollama_base_url
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.get(f"{url}/api/tags")
+                    response.raise_for_status()
+            except httpx.ConnectError:
+                raise ConnectionError(f"Ollama is not running at {url}") from None
             return [ModelOption(m["name"], m["name"], 0.0, 0.0) for m in response.json()["models"]]
         case _:
             raise ValueError(f"Unsupported provider: {provider_type}")
