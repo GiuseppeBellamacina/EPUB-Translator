@@ -101,7 +101,9 @@ def _following(state: ChapterState) -> str:
     return state.trail_context
 
 
-def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledStateGraph:
+def build_chapter_graph(
+    llm: BaseChatModel, glossary: Glossary, review_llm: BaseChatModel | None = None
+) -> CompiledStateGraph:
     """Compile the per-chapter translation graph for a given model and shared glossary."""
 
     async def translate_node(state: ChapterState) -> dict[str, Any]:
@@ -154,7 +156,7 @@ def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledState
         total = len(state.chunks)
         try:
             review = await review_translation(
-                llm=llm,
+                llm=review_llm or llm,
                 original_text=chunk.text,
                 translated_text=state.current_translation,
                 glossary=glossary.relevant(chunk.text),
@@ -192,7 +194,7 @@ def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledState
                     "total_chunks": total,
                     "message": f"Chunk {state.chunk_index + 1}/{total} rejected by reviewer, "
                     "retranslating...",
-                    "data": {"issues": review.issues + review.glossary_violations},
+                    "data": {"issues": review.major_issues + review.glossary_violations},
                 }
             )
         else:
@@ -209,7 +211,7 @@ def build_chapter_graph(llm: BaseChatModel, glossary: Glossary) -> CompiledState
         if should_retry:
             updates["retries"] = state.retries + 1
             updates["feedback"] = "\n".join(
-                [f"- {issue}" for issue in review.issues]
+                [f"- {issue}" for issue in review.major_issues]
                 + [f"- Glossary violation: {v}" for v in review.glossary_violations]
             )
         return updates
@@ -315,6 +317,8 @@ class TranslationPipeline:
         max_retries: Max translation retry attempts on review failure
         style_instructions: Optional free-form user instructions on tone/style
         enable_review: Run the reviewer on every chunk (doubles the LLM calls)
+        review_llm: Model for the review (default: ``llm``). A small model is a poor
+            judge of its own output: reviewing with a stronger one pays off.
     """
 
     def __init__(
@@ -326,6 +330,7 @@ class TranslationPipeline:
         max_retries: int = 1,
         style_instructions: str = "",
         enable_review: bool = True,
+        review_llm: BaseChatModel | None = None,
     ):
         self.llm = llm
         self.source_language = source_language
@@ -337,7 +342,7 @@ class TranslationPipeline:
         self.glossary = Glossary()
         self.book_summary: str = ""
         self._cancelled = False
-        self._graph = build_chapter_graph(llm, self.glossary)
+        self._graph = build_chapter_graph(llm, self.glossary, review_llm)
 
     def cancel(self):
         """Signal cancellation to stop processing."""

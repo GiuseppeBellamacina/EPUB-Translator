@@ -11,6 +11,7 @@ Stop and disconnect pause the job, errors mark it failed — both are resumable.
 """
 
 import asyncio
+import copy
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -87,6 +88,14 @@ async def translate_ws(websocket: WebSocket, book_id: int):
     )
     try:
         llm = create_llm(llm_config)
+        review_llm = None
+        review_model = data.get("review_model")
+        if review_model and review_model != llm_config.model:
+            # Same provider and key; shares the rate limiter so the job keeps its pace
+            review_config = copy.copy(llm_config)
+            review_config.model, review_config.requests_per_second = review_model, None
+            review_llm = create_llm(review_config)
+            review_llm.rate_limiter = llm.rate_limiter
         doc = open_document(book.original_path)
     except Exception as e:
         return await _fail(websocket, f"Failed to start: {e}")
@@ -99,6 +108,7 @@ async def translate_ws(websocket: WebSocket, book_id: int):
         max_retries=1,
         style_instructions=data.get("style_instructions", ""),
         enable_review=data.get("enable_review", settings.enable_review),
+        review_llm=review_llm,
     )
     active_jobs[book_id] = pipeline
 

@@ -9,6 +9,9 @@ interface TranslateOptions {
   model?: string;
   temperature?: number;
   styleInstructions?: string;
+  enableReview?: boolean;
+  /** Reviewer model (same provider); defaults to the translation model. */
+  reviewModel?: string;
   /** Discard saved progress instead of resuming from it. */
   restart?: boolean;
 }
@@ -43,6 +46,8 @@ export function useTranslationWs() {
             temperature: options.temperature ?? 0.0,
             style_instructions: options.styleInstructions || "",
             restart: options.restart ?? false,
+            enable_review: options.enableReview ?? true,
+            review_model: options.reviewModel || undefined,
           }),
         );
       };

@@ -40,6 +40,8 @@ export function TranslatePage() {
   const [sourceLang, setSourceLang] = useState("english");
   const [targetLang, setTargetLang] = useState("italian");
   const [styleInstructions, setStyleInstructions] = useState("");
+  const [enableReview, setEnableReview] = useState(true);
+  const [reviewModel, setReviewModel] = useState("");
   const [loading, setLoading] = useState(true);
 
   const { startTranslation, stopTranslation, isConnected, logs, liveText } =
@@ -99,6 +101,8 @@ export function TranslatePage() {
       targetLanguage: targetLang,
       model: model || undefined,
       styleInstructions: styleInstructions || undefined,
+      enableReview,
+      reviewModel: enableReview ? reviewModel : undefined,
       restart,
     });
   };
@@ -275,6 +279,38 @@ export function TranslatePage() {
                   disabled={isRunning}
                 />
               </div>
+            </div>
+
+            {/* Review */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                <input
+                  type="checkbox"
+                  checked={enableReview}
+                  onChange={(e) => setEnableReview(e.target.checked)}
+                  disabled={isRunning}
+                  className="rounded border-gray-300 dark:border-gray-700"
+                />
+                Review each chunk
+              </label>
+              {enableReview && selectedProvider !== null && (
+                <div className="space-y-1">
+                  <ModelPicker
+                    key={`review-${selectedProvider}`}
+                    providerId={selectedProvider}
+                    preferred={model}
+                    value={reviewModel}
+                    onChange={setReviewModel}
+                    className={inputClass}
+                    disabled={isRunning}
+                  />
+                  <p className="text-[11px] text-gray-400">
+                    Reviewer model. Small models are poor judges of their own
+                    output: e.g. translate with a nano model, review with a
+                    mini one.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Style instructions */}
