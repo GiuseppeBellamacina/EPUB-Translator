@@ -2,17 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Loader2, Pause, Play, Plus, X } from "lucide-react";
-import { api, type Book, type QueueItem, type QueueState } from "../lib/api";
+import { api, QUEUE_PILL, type Book, type QueueItem, type QueueState } from "../lib/api";
 import { Checkbox } from "./controls";
 import { Button, Card, Heading, StatusPill } from "./ui";
-
-const PILL: Record<QueueItem["status"], string> = {
-  pending: "queued",
-  running: "translating",
-  paused: "paused",
-  done: "completed",
-  failed: "failed",
-};
 
 const bookName = (filename: string) => filename.replace(/\.(epub|pdf)$/i, "");
 
@@ -184,7 +176,7 @@ export function QueuePanel({
                       {item.error ?? `${item.completed_units}/${item.total_units}`}
                     </div>
                   </div>
-                  <StatusPill status={PILL[item.status]} />
+                  <StatusPill status={QUEUE_PILL[item.status]} />
                   <button
                     type="button"
                     onClick={() => act(api.removeFromQueue(item.id))}

@@ -26,6 +26,8 @@ export function useTranslationWs(onFinished?: () => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [events, setEvents] = useState<JobEvent[]>([]);
+  // the last message received live (events also holds the log loaded on page open)
+  const [lastMessage, setLastMessage] = useState<{ bookId: number; event: JobEvent } | null>(null);
 
   const connect = useCallback(
     (bookId: number, first: object) => {
@@ -41,6 +43,7 @@ export function useTranslationWs(onFinished?: () => void) {
       ws.onmessage = (message) => {
         const event: JobEvent = JSON.parse(message.data);
         setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
+        setLastMessage({ bookId, event });
       };
       ws.onclose = () => {
         if (wsRef.current !== ws) return; // replaced or the page left
@@ -88,5 +91,14 @@ export function useTranslationWs(onFinished?: () => void) {
     ws?.close();
   }, []);
 
-  return { startTranslation, watchTranslation, stopTranslation, disconnect, isConnected, events, setEvents };
+  return {
+    startTranslation,
+    watchTranslation,
+    stopTranslation,
+    disconnect,
+    isConnected,
+    events,
+    setEvents,
+    lastMessage,
+  };
 }

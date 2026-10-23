@@ -229,3 +229,22 @@ def test_books_added_to_a_paused_queue_wait_for_its_resume(client, sample_epub, 
     queue = _wait(client, lambda q: not q["running"] and q["items"][-1]["status"] == "done")
     assert [i["book_id"] for i in queue["items"]] == [first, second, third]
     assert {i["status"] for i in queue["items"]} == {"done"}
+
+
+def test_progress_shows_the_queue_of_the_book(client, sample_epub):
+    provider_id, (first, second) = _setup(client, sample_epub)
+    client.post("/api/queue", json={"book_ids": [first, second], "provider_id": provider_id})
+    _wait(client, lambda q: not q["running"])
+
+    queue = client.get(f"/api/books/{second}/progress").json()["queue"]
+    assert [(i["book_id"], i["status"]) for i in queue["items"]] == [
+        (first, "done"),
+        (second, "done"),
+    ]
+    # a one-book start from the translate page is not shown as a queue
+    provider = {"provider_id": provider_id}
+    with client.websocket_connect(f"/ws/translate/{first}") as ws:
+        ws.send_json({"action": "start", **provider})
+        while ws.receive_json()["event"] != "job_complete":
+            pass
+    assert client.get(f"/api/books/{first}/progress").json()["queue"] is None
