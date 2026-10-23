@@ -33,6 +33,16 @@ def test_user_entries_are_never_changed():
     assert c.entries == [e("Sylphiette", gender="female", aliases=["Sylphy"])]
 
 
+def test_a_known_gender_is_corrected_only_with_evidence_from_the_passage():
+    c = Compendium()
+    c.merge([e("Ghislaine", gender="male")])
+    text = "Ghislaine drew her sword; she laughed."
+    assert c.merge([e("Ghislaine", gender="female")], source_text=text) == []
+    assert c.merge([e("Ghislaine", gender="female", evidence="she cried")], source_text=text) == []
+    [fixed] = c.merge([e("Ghislaine", gender="female", evidence="Drew her  sword")], text)
+    assert (fixed.gender, fixed.evidence) == ("female", "Drew her  sword")
+
+
 def test_relevant_and_render():
     c = Compendium()
     c.merge(

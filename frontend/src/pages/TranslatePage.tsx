@@ -267,7 +267,7 @@ export function TranslatePage() {
                 <GlossaryEditor
                   bookId={id}
                   initial={glossary}
-                  disabled={running}
+                  running={running}
                   onSaved={() => api.getGlossary(id).then(setGlossary)}
                 />
               </>
@@ -281,7 +281,7 @@ export function TranslatePage() {
                 <CompendiumEditor
                   bookId={id}
                   initial={compendium}
-                  disabled={running}
+                  running={running}
                   onSaved={() => api.getCompendium(id).then(setCompendium)}
                 />
               </>

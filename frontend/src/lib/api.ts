@@ -112,6 +112,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(entry),
     }),
+  // single entries: also while translating (the running job uses them at once)
+  editGlossaryEntry: (bookId: number, id: number, entry: GlossaryEntryCreate) =>
+    request<GlossaryEntry>(`/glossary/${bookId}/entry/${id}`, { method: "PUT", body: JSON.stringify(entry) }),
+  deleteGlossaryEntry: (bookId: number, id: number) =>
+    request(`/glossary/${bookId}/entry/${id}`, { method: "DELETE" }),
+  saveCompendiumEntry: (bookId: number, entry: CompendiumItem) =>
+    request<CompendiumItem>(`/compendium/${bookId}/entry${entry.id ? `/${entry.id}` : ""}`, {
+      method: entry.id ? "PUT" : "POST",
+      body: JSON.stringify(entry),
+    }),
+  deleteCompendiumEntry: (bookId: number, id: number) =>
+    request(`/compendium/${bookId}/entry/${id}`, { method: "DELETE" }),
 
   // Queue: books translated one after another on the server
   getQueue: () => request<QueueState>("/queue"),
@@ -331,6 +343,8 @@ export interface CompendiumItem {
   gender: (typeof GENDERS)[number];
   aliases: string[];
   notes: string;
+  /** set when the translation corrected the gender: the words of the text that prove it */
+  evidence?: string;
   /** edited by the user: the translation never changes it again */
   user_edited: boolean;
 }

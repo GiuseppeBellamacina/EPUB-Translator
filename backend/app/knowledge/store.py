@@ -37,7 +37,12 @@ def glossary_item(row: GlossaryEntry) -> GlossaryItem:
 
 def compendium_entry(row: CompendiumRecord) -> CompendiumEntry:
     return CompendiumEntry(
-        name=row.name, kind=row.kind, gender=row.gender, aliases=row.aliases or [], notes=row.notes
+        name=row.name,
+        kind=row.kind,
+        gender=row.gender,
+        aliases=row.aliases or [],
+        notes=row.notes,
+        evidence=row.evidence or "",
     )
 
 
@@ -91,7 +96,7 @@ class GlossaryStore(_SharedStore):
     async def load(self) -> None:
         """User terms first (they win), then learned ones; learned near-duplicates stored
         before the check existed are deleted, per book."""
-        self.glossary.clear()
+        fresh = Glossary()
         async with async_session() as db:
             result = await db.execute(
                 select(GlossaryEntry)
@@ -104,8 +109,9 @@ class GlossaryStore(_SharedStore):
                 if not own.add([glossary_item(row)]) and not row.user_edited:
                     await db.delete(row)
                     continue
-                self.glossary.add([glossary_item(row)])
+                fresh.add([glossary_item(row)])
             await db.commit()
+        self.glossary.replace(fresh)
 
     async def learn(self, items: list[GlossaryItem], source_text: str | None = None):
         """Add terms (validated, near-duplicates rejected) and persist the accepted ones."""
@@ -139,7 +145,6 @@ class CompendiumStore(_SharedStore):
         self.compendium = Compendium()
 
     async def load(self) -> None:
-        self.compendium.clear()
         async with async_session() as db:
             result = await db.execute(
                 select(CompendiumRecord)
@@ -147,8 +152,10 @@ class CompendiumStore(_SharedStore):
                 .order_by(CompendiumRecord.user_edited.desc(), CompendiumRecord.id)
             )
             rows = list(result.scalars())
-        self.compendium.merge([compendium_entry(r) for r in rows if r.user_edited], user=True)
-        self.compendium.merge([compendium_entry(r) for r in rows if not r.user_edited])
+        fresh = Compendium()
+        fresh.merge([compendium_entry(r) for r in rows if r.user_edited], user=True)
+        fresh.merge([compendium_entry(r) for r in rows if not r.user_edited])
+        self.compendium.replace(fresh)
 
     async def learn(self, updates: list[CompendiumEntry], source_text: str | None = None):
         """Fold updates in and persist the entries that changed."""

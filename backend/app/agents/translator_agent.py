@@ -42,7 +42,7 @@ and the passage does not reveal it, prefer wording that does not commit to a gen
 10. Report in compendium_updates what THIS passage reveals that the COMPENDIUM lacks: new \
 characters (with their gender when pronouns, titles or descriptions make it clear), places \
 and other recurring elements, new aliases, and short notes useful to translate them \
-consistently. Only facts stated or clearly implied by the text; never repeat what is listed
+consistently. Only facts stated or clearly implied by the text; never repeat what is listed. When the passage clearly contradicts a listed gender, report the entry with the right gender and, in evidence, the words of the passage that prove it
 
 {style_instructions}""",
         ),

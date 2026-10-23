@@ -24,6 +24,12 @@ def _key(name: str) -> str:
     return " ".join(content_words(name))
 
 
+def _quoted(quote: str, text: str) -> bool:
+    """Whether ``quote`` is copied from ``text`` (case and spacing aside)."""
+    quote = " ".join(quote.lower().split())
+    return len(quote) > 3 and quote in " ".join(text.lower().split())
+
+
 def _mentioned(name: str, text: str) -> bool:
     return bool(re.search(r"(?<!\w)" + re.escape(name.strip()) + r"(?!\w)", text, re.IGNORECASE))
 
@@ -43,9 +49,10 @@ class Compendium:
     def __len__(self) -> int:
         return len(self._entries)
 
-    def clear(self) -> None:
-        """Empty in place (the graph keeps its reference), before reloading."""
-        self.__init__()
+    def replace(self, other: "Compendium") -> None:
+        """Take ``other``'s entries in place (the graph keeps its reference), in one step:
+        readers never see a half-loaded compendium."""
+        self.__dict__ = other.__dict__
 
     def _find(self, entry: CompendiumEntry) -> int | None:
         for name in [entry.name, *entry.aliases]:
@@ -73,9 +80,10 @@ class Compendium:
         """Fold updates into the compendium, returning the entries that changed.
 
         A new name becomes an entry; a known one (by name or alias) only gains what it
-        lacks: a gender when unknown, new aliases, new notes. Entries written by the user
-        are never changed. With ``source_text``, an update whose name and aliases do not
-        occur in it is dropped (hallucinated by the model).
+        lacks: a gender when unknown, new aliases, new notes. A known gender is corrected
+        only with ``evidence`` quoted from ``source_text`` (kept on the entry: it marks the
+        correction). Entries written by the user are never changed. With ``source_text``,
+        an update whose name and aliases do not occur in it is dropped (hallucinated).
         """
         plain = _PLACEHOLDER.sub("", source_text) if source_text is not None else None
         changed: dict[int, CompendiumEntry] = {}
@@ -91,7 +99,11 @@ class Compendium:
                 continue
             index = self._find(update)
             if index is None:
-                entry = update.model_copy(update={"name": names[0], "aliases": [], "notes": ""})
+                # evidence is trusted only from stored rows (no source_text): it marks a correction
+                evidence = update.evidence if plain is None else ""
+                entry = update.model_copy(
+                    update={"name": names[0], "aliases": [], "notes": "", "evidence": evidence}
+                )
                 index = len(self._entries)
                 self._entries.append(entry)
                 self._register(index, entry.name)
@@ -104,6 +116,12 @@ class Compendium:
             new = entry.model_copy(deep=True)
             if new.gender in ("unknown", "n/a") and update.gender in ("male", "female"):
                 new.gender = update.gender
+            elif (
+                {new.gender, update.gender} == {"male", "female"}
+                and plain is not None
+                and _quoted(update.evidence, plain)
+            ):
+                new.gender, new.evidence = update.gender, update.evidence.strip()
             for alias in names:
                 if self._register(index, alias):
                     new.aliases.append(alias)

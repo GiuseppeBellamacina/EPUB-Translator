@@ -125,9 +125,11 @@ export function logEntries(eventsNewestFirst: JobEvent[], unitAbbr: string): Log
         break;
       }
       case "compendium_update": {
-        const entries = (e.data?.entries as { name: string; gender: string }[]) ?? [];
+        const entries = (e.data?.entries as { name: string; gender: string; evidence?: string }[]) ?? [];
         const described = entries.map((c) =>
-          c.gender === "male" || c.gender === "female" ? `${c.name} (${c.gender})` : c.name,
+          c.gender === "male" || c.gender === "female"
+            ? `${c.name} (${c.gender}${c.evidence ? ", corrected" : ""})`
+            : c.name,
         );
         out.push({ ...base, kind: "glossary", unit: at, text: `Compendium: ${described.join(", ")}` });
         break;
