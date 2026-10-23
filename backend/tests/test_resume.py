@@ -186,3 +186,21 @@ async def test_pause_does_not_wait_for_slow_model_calls(sample_epub, tmp_path, a
     await pauser
     assert time.monotonic() - started < 3
     assert not any(e.event_type == "job_complete" for e in events)
+
+
+async def test_prepare_drops_learned_near_duplicates_but_keeps_user_terms(book_id, sample_epub):
+    async with async_session() as s:
+        for term, user in [("Mara's", False), ("Mara", True), ("the Lighthouse", False),
+                           ("Lighthouse", False), ("lighthouse keeper", True)]:  # fmt: skip
+            s.add(GlossaryEntry(book_id=book_id, source_term=term, target_term=term,
+                                user_edited=user))  # fmt: skip
+        await s.commit()
+    resume = await JobStore(book_id).prepare(open_document(sample_epub).units)
+    assert [g.source_term for g in resume.glossary] == [
+        "Mara",
+        "lighthouse keeper",
+        "the Lighthouse",
+    ]
+    async with async_session() as s:
+        rows = (await s.execute(select(GlossaryEntry.source_term))).scalars().all()
+    assert sorted(rows) == ["Mara", "lighthouse keeper", "the Lighthouse"]
