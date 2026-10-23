@@ -1,6 +1,6 @@
-from app.agents.compendium import Compendium, render
 from app.agents.pipeline import TranslationPipeline
 from app.core.fake_llm import _extract_source_text, meow_transform
+from app.knowledge.compendium import Compendium, render
 from app.models.schemas import CompendiumEntry, ReviewIssue, ReviewResult, TranslationResult
 from tests.conftest import translate
 

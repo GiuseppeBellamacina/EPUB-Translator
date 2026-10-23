@@ -1,0 +1,18 @@
+"""Value objects shared by the queue, the runner and the API."""
+
+from pydantic import BaseModel
+
+
+class RunConfig(BaseModel):
+    """The settings of one book's run (stored on the queue item and on the job)."""
+
+    provider_id: int
+    model: str | None = None
+    review_model: str | None = None
+    enable_review: bool = True
+    source_language: str | None = None  # None: the book's own
+    target_language: str | None = None
+    style_instructions: str = ""
+    temperature: float = 0.0
+    max_tokens: int | None = None
+    restart: bool = False

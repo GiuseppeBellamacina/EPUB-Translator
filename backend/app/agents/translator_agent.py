@@ -7,8 +7,8 @@ import re
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.compendium import render
 from app.core.llm_factory import structured_chain
+from app.knowledge.compendium import render
 from app.models.schemas import CompendiumEntry, GlossaryItem, TranslationResult
 
 TRANSLATION_PROMPT = ChatPromptTemplate.from_messages(

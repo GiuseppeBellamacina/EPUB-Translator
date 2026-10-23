@@ -37,10 +37,10 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.analyzer import analyze_context
-from app.agents.compendium import Compendium
-from app.agents.glossary import Glossary
 from app.agents.reviewer import review_translation
 from app.agents.translator_agent import split_paragraphs, translate_blocks
+from app.knowledge.compendium import Compendium
+from app.knowledge.glossary import Glossary
 from app.models.schemas import AnalysisResult, CompendiumEntry, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker, TextBlock
 

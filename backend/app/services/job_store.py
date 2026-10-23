@@ -16,8 +16,6 @@ from datetime import datetime
 
 from sqlalchemy import func, select, update
 
-from app.agents.compendium import Compendium
-from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationProgress
 from app.db.database import async_session
 from app.db.models import (
@@ -29,6 +27,8 @@ from app.db.models import (
     GlossaryEntry,
     TranslationJob,
 )
+from app.knowledge.compendium import Compendium
+from app.knowledge.glossary import Glossary
 from app.models.schemas import CompendiumEntry, GlossaryItem
 from app.services.documents import Translations, Unit
 

@@ -12,7 +12,7 @@ earlier) is never overwritten, not even by a near-duplicate spelling of it.
 
 import re
 
-from app.agents.similarity import TermIndex
+from app.knowledge.similarity import TermIndex
 from app.models.schemas import GlossaryItem
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")

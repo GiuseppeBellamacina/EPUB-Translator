@@ -130,7 +130,7 @@ class QueueItem(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     book_id = Column(Integer, ForeignKey("books.id"), nullable=False)
     position = Column(Integer, nullable=False)
-    config = Column(JSON, nullable=False)  # run settings, see job_runner.RunConfig
+    config = Column(JSON, nullable=False)  # run settings, see app.jobs.RunConfig
     # start from the glossary of the book translated just before it in the queue
     keep_glossary = Column(Boolean, default=False)
     keep_compendium = Column(Boolean, default=False)  # same, for the compendium

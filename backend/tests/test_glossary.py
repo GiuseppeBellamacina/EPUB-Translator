@@ -1,6 +1,6 @@
-from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationPipeline
 from app.core.fake_llm import _extract_source_text, meow_transform
+from app.knowledge.glossary import Glossary
 from app.models.schemas import GlossaryItem, ReviewIssue, ReviewResult, TranslationResult
 from tests.conftest import translate
 
