@@ -9,7 +9,7 @@ import {
   ListboxOptions,
   Switch,
 } from "@headlessui/react";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { cn } from "../lib/utils";
 
 /** On/off switch with its label (settings such as "Review each chunk"). */
@@ -124,31 +124,5 @@ export function Select<T extends string>({
         </ListboxOptions>
       </Listbox>
     </Field>
-  );
-}
-
-/** Up/down buttons to move an item in an ordered list. */
-export function MoveButtons({
-  label,
-  onUp,
-  onDown,
-}: {
-  /** what moves, for screen readers */
-  label: string;
-  /** undefined when the item cannot move that way */
-  onUp?: () => void;
-  onDown?: () => void;
-}) {
-  const button =
-    "rounded-md p-1 text-faint hover:bg-tint hover:text-ink disabled:invisible focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
-  return (
-    <span className="flex shrink-0 flex-col">
-      <button type="button" onClick={onUp} disabled={!onUp} aria-label={`Move ${label} up`} className={button}>
-        <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      <button type="button" onClick={onDown} disabled={!onDown} aria-label={`Move ${label} down`} className={button}>
-        <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-    </span>
   );
 }

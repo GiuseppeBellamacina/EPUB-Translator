@@ -5,6 +5,7 @@ import { api, type Book, type Provider } from "../lib/api";
 import { settingsFrom, toRunConfig, type RunSettings } from "../lib/runSettings";
 import { Toggle } from "./controls";
 import { RunSettingsFields } from "./RunSettingsFields";
+import { SortableItem, SortableList } from "./SortableList";
 import { Button } from "./ui";
 
 /** One set of settings for several books, translated one after another. */
@@ -18,6 +19,7 @@ export function QueueDialog({
   onClose: () => void;
   onQueued: () => void;
 }) {
+  const [order, setOrder] = useState(books);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [settings, setSettings] = useState<RunSettings | null>(null);
   const [keepGlossary, setKeepGlossary] = useState(false);
@@ -38,7 +40,7 @@ export function QueueDialog({
     setError(null);
     try {
       await api.addToQueue(
-        books.map((b) => b.id),
+        order.map((b) => b.id),
         toRunConfig(settings),
         { glossary: keepGlossary, compendium: keepCompendium },
       );
@@ -66,13 +68,22 @@ export function QueueDialog({
           </div>
 
           <div className="flex flex-col gap-5 px-6 py-5">
-            <ol className="m-0 flex list-decimal flex-col gap-1 rounded-md bg-tint px-4 py-3 pl-9 text-sm">
-              {books.map((b) => (
-                <li key={b.id} className="truncate">
-                  {b.filename.replace(/\.(epub|pdf)$/i, "")}
-                </li>
-              ))}
-            </ol>
+            <SortableList
+              ids={order.map((b) => b.id)}
+              onReorder={(ids) => setOrder((o) => ids.map((id) => o.find((b) => b.id === id)!))}
+            >
+              <ol className="m-0 flex list-none flex-col gap-1 rounded-md bg-tint p-2 text-sm">
+                {order.map((b, n) => {
+                  const name = b.filename.replace(/\.(epub|pdf)$/i, "");
+                  return (
+                    <SortableItem key={b.id} id={b.id} label={name} className="flex items-center gap-2 rounded-md bg-tint">
+                      <span className="w-5 shrink-0 text-right font-serif text-faint">{n + 1}</span>
+                      <span className="min-w-0 truncate">{name}</span>
+                    </SortableItem>
+                  );
+                })}
+              </ol>
+            </SortableList>
 
             {settings ? (
               <RunSettingsFields
