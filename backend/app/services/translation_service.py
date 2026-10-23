@@ -393,6 +393,8 @@ async def translate_document(
         async def review(unit: int, block: int, queue: Queue) -> None:
             source = unit_blocks(unit)[block].text
             before = unit_blocks(unit)[block - 1].text if block else ""
+            after = "\n\n".join(b.text for b in unit_blocks(unit)[block + 1 : block + 2])
+            around = before + "\n" + after  # names said just before or after the passage
             current = results[unit][block]
             async with semaphore:
                 try:
@@ -402,15 +404,16 @@ async def translate_document(
                         translated_text=current,
                         doubts=sorted(set(doubts[(unit, block)])),
                         glossary=(
-                            pipeline.glossary.relevant(source, before) if f.use_glossary else []
+                            pipeline.glossary.relevant(source, around) if f.use_glossary else []
                         ),
                         compendium=(
-                            pipeline.compendium.relevant(source, before) if f.use_compendium else []
+                            pipeline.compendium.relevant(source, around) if f.use_compendium else []
                         ),
                         source_language=pipeline.source_language,
                         target_language=pipeline.target_language,
                         style_instructions=pipeline.style_instructions,
                         previous=before,
+                        following=after,
                     )
                 except Exception as e:  # stays open: the next run retries it
                     await queue.put(
