@@ -157,6 +157,7 @@ class JobRunner:
                 previous=resume.previous,
                 completed=resume.completed,
                 analysis=resume.analysis,
+                bookmarks=resume.bookmarks,
                 max_concurrency=params.get("max_concurrency", settings.max_concurrency),
             ):
                 await store.handle(event)

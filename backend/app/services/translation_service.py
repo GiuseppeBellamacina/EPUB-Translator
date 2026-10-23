@@ -6,23 +6,34 @@ Phases:
 2. Units (chapters/pages) run as concurrent tasks, at most ``max_concurrency`` at
    a time; their events are merged into one stream. Units already completed are
    skipped; partially translated units resume from their per-block checkpoint.
-3. The output is written in the input format from all unit translations.
+3. Doubt review: the passages the translator was unsure about (``doubt_flagged``, also
+   added when a compendium gender is corrected) are revisited with the final glossary
+   and compendium; corrections are applied before saving.
+4. The output is written in the input format from all unit translations.
 
 Every event is yielded to the caller, which persists checkpoints (``chunk_done``,
-``chapter_saved``, ``glossary_update``, ``analysis_complete``) as they arrive.
+``chapter_saved``, ``doubt_flagged``, ``doubt_resolved``, ``analysis_complete``) as they
+arrive.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Collection
+import re
+from collections.abc import AsyncGenerator, Callable, Collection, Coroutine
 from pathlib import Path
 from typing import Any
 
 from app.agents.pipeline import TranslationPipeline, TranslationProgress
-from app.services.chunker import SmartChunker
+from app.agents.reviewer import resolve_doubts
+from app.agents.translator_agent import keep_unfinished, split_paragraphs
+from app.knowledge.matcher import TermMatcher
+from app.services.chunker import SmartChunker, TextBlock
 from app.services.documents import Document, Translations
 
 ANALYSIS_MIN_CHARS = 500
 ANALYSIS_MAX_CHARS = 12000  # analyzer truncation (agents/analyzer.py)
+_PLACEHOLDER = re.compile(r"</?\d+/?>")
+
+Queue = asyncio.Queue[TranslationProgress | None]
 
 
 def analysis_text(doc: Document, max_chars: int = ANALYSIS_MAX_CHARS) -> str:
@@ -88,7 +99,9 @@ async def translate_document(
     completed: Collection[int] = (),
     analysis: dict[str, Any] | None = None,
     max_concurrency: int = 1,
+    bookmarks: list[dict] | None = None,
 ) -> AsyncGenerator[TranslationProgress, None]:
+    """``bookmarks``: the open doubts of earlier runs (``unit``, ``block``, ``quote``, ``reason``)."""
     previous = previous or {}
     units = doc.units
     total = len(units)
@@ -134,14 +147,34 @@ async def translate_document(
             message=f"Chapter {i + 1}/{total} already translated",
         )
 
-    queue: asyncio.Queue[TranslationProgress | None] = asyncio.Queue()
     semaphore = asyncio.Semaphore(max(1, max_concurrency))
     chunker = pipeline.chunker
-    blocks = {i: doc.blocks(i, chunker) for i in range(total) if i not in completed}
+    blocks: dict[int, list[TextBlock]] = {
+        i: doc.blocks(i, chunker) for i in range(total) if i not in completed
+    }
+
+    def unit_blocks(i: int) -> list[TextBlock]:
+        if i not in blocks:  # a unit completed in an earlier run
+            blocks[i] = doc.blocks(i, chunker)
+        return blocks[i]
 
     def unit_checkpoint(i: int) -> list[str | None]:
         saved = previous.get(i)
         return list(saved) if saved and len(saved) == len(blocks[i]) else [None] * len(blocks[i])
+
+    # what is translated so far, per block: auto-bookmarks go only to translated blocks
+    done: Translations = {i: list(t) for i, t in previous.items() if t}
+    doubts: dict[tuple[int, int], list[str]] = {}  # (unit, block) -> "quote: reason"
+    for b in bookmarks or []:
+        doubts.setdefault((b["unit"], b["block"]), []).append(f"{b['quote']}: {b['reason']}")
+
+    def locate(group: list[int], block: int) -> tuple[int, int]:
+        """(unit, block in it) of a block of a group's concatenated blocks."""
+        for i in group:
+            if block < len(blocks[i]):
+                return i, block
+            block -= len(blocks[i])
+        raise IndexError(block)
 
     def per_unit(group: list[int], values: list) -> dict[int, list]:
         """Split a group's per-block list back into its units."""
@@ -159,23 +192,79 @@ async def translate_document(
         for i in group:
             lo, hi = max(start, at), min(end, at + len(blocks[i]))
             if lo < hi or (translations is None and at <= start < at + len(blocks[i])):
+                part = None if translations is None else translations[lo - start : hi - start]
+                if part is not None:
+                    done.setdefault(i, [None] * len(blocks[i]))[lo - at : hi - at] = part
                 yield TranslationProgress(
                     event_type="chunk_done",
                     chapter_index=i,
                     total_chapters=total,
                     chunk_index=event.chunk_index,
                     total_chunks=event.total_chunks,
-                    data={
-                        "offset": lo - at,
-                        "translations": (
-                            None if translations is None else translations[lo - start : hi - start]
-                        ),
-                        "total_blocks": len(blocks[i]),
-                    },
+                    data={"offset": lo - at, "translations": part, "total_blocks": len(blocks[i])},
                 )
             at += len(blocks[i])
 
-    async def run(group: list[int]) -> None:
+    def flagged(unit: int, found: list[dict]) -> TranslationProgress:
+        return TranslationProgress(
+            event_type="doubt_flagged",
+            chapter_index=unit,
+            total_chapters=total,
+            message=f"{len(found)} doubt(s) bookmarked for the final review",
+            data={"doubts": found},
+        )
+
+    def split_doubts(group: list[int], event: TranslationProgress):
+        """A chunk's doubts, per unit (their block indexes are the group's)."""
+        per: dict[int, list[dict]] = {}
+        for doubt in event.data["doubts"]:
+            unit, block = locate(group, doubt["block"])
+            per.setdefault(unit, []).append({**doubt, "block": block})
+        return [flagged(unit, found) for unit, found in per.items()]
+
+    def corrected_mentions(names: list[str]) -> list[TranslationProgress]:
+        """A compendium gender was corrected: bookmark the translated blocks naming it."""
+        entries = [e for e in pipeline.compendium.entries if e.name in names]
+        matcher = TermMatcher()
+        for entry in entries:
+            for name in [entry.name, *entry.aliases]:
+                matcher.add(name, entry.name)
+        events = []
+        for unit, translations in sorted(done.items()):
+            found = []
+            for b, block in enumerate(unit_blocks(unit)):
+                if b < len(translations) and translations[b] is not None:
+                    for name in matcher.find(block.text):
+                        entry = next(e for e in entries if e.name == name)
+                        found.append(
+                            {
+                                "block": b,
+                                "quote": name,
+                                "reason": f"Compendium corrected: {name} is {entry.gender}",
+                                "source": block.text,
+                                "translation": translations[b],
+                            }
+                        )
+            if found:
+                events.append(flagged(unit, found))
+        return events
+
+    def saved(i: int, translations: list[str | None]) -> TranslationProgress:
+        return TranslationProgress(
+            event_type="chapter_saved",
+            chapter_index=i,
+            total_chapters=total,
+            message=f"Chapter {i + 1} saved",
+            data={
+                "item_id": units[i].item_id,
+                "order_index": i,
+                "translations": translations,
+                "failed_chunks": [0] if None in translations else [],
+                "translated_html": doc.render(i, translations),
+            },
+        )
+
+    async def run(group: list[int], queue: Queue) -> None:
         first, last = group[0], group[-1]
         async with semaphore:
             if pipeline._cancelled:
@@ -197,26 +286,19 @@ async def translate_document(
                         for part in split_checkpoint(group, event):
                             await queue.put(part)
                         continue
+                    elif event.event_type == "doubt_flagged":
+                        for part in split_doubts(group, event):
+                            await queue.put(part)
+                        continue
                     await queue.put(event)
+                    if event.event_type == "compendium_update" and event.data.get("corrected"):
+                        for part in corrected_mentions(event.data["corrected"]):
+                            await queue.put(part)
                 if pipeline._cancelled or translated is None:
                     return
                 for i, translations in per_unit(group, translated).items():
                     results[i] = translations
-                    await queue.put(
-                        TranslationProgress(
-                            event_type="chapter_saved",
-                            chapter_index=i,
-                            total_chapters=total,
-                            message=f"Chapter {i + 1} saved",
-                            data={
-                                "item_id": units[i].item_id,
-                                "order_index": i,
-                                "translations": translations,
-                                "failed_chunks": [0] if None in translations else [],
-                                "translated_html": doc.render(i, translations),
-                            },
-                        )
-                    )
+                    await queue.put(saved(i, translations))
             except Exception as e:
                 await queue.put(
                     TranslationProgress(
@@ -227,38 +309,131 @@ async def translate_document(
                     )
                 )
 
-    groups = unit_groups([i for i in range(total) if i not in completed], blocks, chunker)
-    tasks = [asyncio.create_task(run(group)) for group in groups]
+    async def stream(
+        jobs: Callable[[Queue], list[Coroutine]],
+    ) -> AsyncGenerator[TranslationProgress, None]:
+        """Run the coroutines (they put events on the queue) and yield their events.
 
-    async def close_when_done() -> None:
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await queue.put(None)
+        A pause ends the stream at once, without waiting for model calls in flight
+        (minutes with a slow or rate-limited model); work finished before it is still
+        delivered, so its checkpoints are saved.
+        """
+        queue: Queue = asyncio.Queue()
+        tasks = [asyncio.create_task(job) for job in jobs(queue)]
 
-    async def close_when_cancelled() -> None:
-        # A pause must not wait for model calls in flight (minutes with a slow or
-        # rate-limited model): end the loop now; finished chunks are already queued.
-        await pipeline.cancelled.wait()
-        await queue.put(None)
+        async def close_when_done() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await queue.put(None)
 
-    closer = asyncio.create_task(close_when_done())
-    stopper = asyncio.create_task(close_when_cancelled())
-    try:
-        while (event := await queue.get()) is not None:
-            yield event
-            if pipeline._cancelled:
-                break
-    finally:
-        for task in [*tasks, closer, stopper]:
-            task.cancel()
+        async def close_when_cancelled() -> None:
+            await pipeline.cancelled.wait()
+            await queue.put(None)
 
-    if pipeline._cancelled:
-        # Work finished before the stop is already queued: deliver its checkpoints.
-        while not queue.empty():
-            if (event := queue.get_nowait()) is not None:
+        closer = asyncio.create_task(close_when_done())
+        stopper = asyncio.create_task(close_when_cancelled())
+        try:
+            while (event := await queue.get()) is not None:
                 yield event
+                if pipeline._cancelled:
+                    break
+        finally:
+            for task in [*tasks, closer, stopper]:
+                task.cancel()
+        if pipeline._cancelled:
+            while not queue.empty():
+                if (event := queue.get_nowait()) is not None:
+                    yield event
+
+    def remember(event: TranslationProgress) -> TranslationProgress:
+        if event.event_type == "doubt_flagged":
+            for d in event.data["doubts"]:
+                key = (event.chapter_index, d["block"])
+                doubts.setdefault(key, []).append(f"{d['quote']}: {d['reason']}")
+        return event
+
+    groups = unit_groups([i for i in range(total) if i not in completed], blocks, chunker)
+    async for event in stream(lambda queue: [run(group, queue) for group in groups]):
+        yield remember(event)
+    if pipeline._cancelled:
         return
 
-    # Phase 3: output
+    # Phase 3: doubt review
+    pending = [
+        (unit, block)
+        for unit, block in sorted(doubts)
+        if (results.get(unit) or [])[block : block + 1] not in ([], [None])
+    ]
+    if pipeline.doubt_review and pending:
+        yield TranslationProgress(
+            event_type="doubt_review_start",
+            total_chapters=total,
+            message=f"Reviewing {len(pending)} passage(s) translated with doubts",
+        )
+        touched: set[int] = set()
+
+        async def review(unit: int, block: int, queue: Queue) -> None:
+            source = unit_blocks(unit)[block].text
+            before = unit_blocks(unit)[block - 1].text if block else ""
+            current = results[unit][block]
+            async with semaphore:
+                try:
+                    resolution = await resolve_doubts(
+                        pipeline.review_llm,
+                        original_text=source,
+                        translated_text=current,
+                        doubts=sorted(set(doubts[(unit, block)])),
+                        glossary=pipeline.glossary.relevant(source, before),
+                        compendium=pipeline.compendium.relevant(source, before),
+                        source_language=pipeline.source_language,
+                        target_language=pipeline.target_language,
+                        style_instructions=pipeline.style_instructions,
+                        previous=before,
+                    )
+                except Exception as e:  # stays open: the next run retries it
+                    await queue.put(
+                        TranslationProgress(
+                            event_type="error",
+                            chapter_index=unit,
+                            total_chapters=total,
+                            message=f"Doubt review failed on chapter {unit + 1}: {e}",
+                        )
+                    )
+                    return
+            fixed, note = None, resolution.note.strip()
+            if resolution.translation and resolution.translation.strip() != current:
+                text = keep_unfinished(source, " ".join(split_paragraphs(resolution.translation)))
+                if sorted(_PLACEHOLDER.findall(text)) == sorted(_PLACEHOLDER.findall(source)):
+                    glossary = pipeline.glossary.relevant(source)
+                    fixed = pipeline.glossary.enforce(text, glossary)
+                else:
+                    note = "Kept: the correction lost inline markup. " + note
+            if fixed:
+                results[unit][block] = fixed
+                touched.add(unit)
+            await queue.put(
+                TranslationProgress(
+                    event_type="doubt_resolved",
+                    chapter_index=unit,
+                    total_chapters=total,
+                    message=f"Doubt on chapter {unit + 1}: {'fixed' if fixed else 'kept'}",
+                    data={
+                        "block": block,
+                        "status": "fixed" if fixed else "kept",
+                        "translation": fixed,
+                        "note": note,
+                    },
+                )
+            )
+
+        async for event in stream(lambda queue: [review(u, b, queue) for u, b in pending]):
+            yield event
+        # fixes made before a pause are saved too: their bookmarks are closed
+        for unit in sorted(touched):
+            yield saved(unit, results[unit])
+        if pipeline._cancelled:
+            return
+
+    # Phase 4: output
     yield TranslationProgress(event_type="building_epub", message="Building translated file...")
     doc.save(output_path, results)
     failed_units = [

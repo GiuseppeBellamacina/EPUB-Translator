@@ -92,6 +92,7 @@ export const api = {
       `/providers/${providerId}/models${refresh ? "?refresh=true" : ""}`,
     ),
   getProgress: (bookId: number) => request<BookProgress>(`/books/${bookId}/progress`),
+  getBookmarks: (bookId: number) => request<Bookmark[]>(`/books/${bookId}/bookmarks`),
   /** Pause a running job that this page is not connected to (e.g. after navigating away). */
   stopTranslation: (bookId: number) =>
     request<{ status: string }>(`/translate/${bookId}/stop`, { method: "POST" }),
@@ -213,6 +214,20 @@ export interface Preview {
   original_text: string;
   translated_text: string;
   original_html: string;
+}
+
+/** A passage translated with a doubt, revisited by the end-of-book doubt review. */
+export interface Bookmark {
+  id: number;
+  unit: number;
+  block: number;
+  quote: string;
+  reason: string;
+  source: string | null;
+  translation: string | null;
+  status: "open" | "fixed" | "kept";
+  resolution: string | null;
+  note: string | null;
 }
 
 export interface GlossaryEntry {

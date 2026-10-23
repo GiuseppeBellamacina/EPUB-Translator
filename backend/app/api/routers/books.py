@@ -23,6 +23,7 @@ from app.core.encryption import decrypt_api_key
 from app.db.database import get_db
 from app.db.models import (
     Book,
+    Bookmark,
     BookStatus,
     Chapter,
     ChapterStatus,
@@ -111,7 +112,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Book not found")
     if jobs.is_running(book_id):
         raise HTTPException(409, "Pause the translation before deleting the book")
-    for model in (Chapter, GlossaryEntry, CompendiumRecord, TranslationJob, QueueItem):
+    for model in (Chapter, GlossaryEntry, CompendiumRecord, Bookmark, TranslationJob, QueueItem):
         await db.execute(delete(model).where(model.book_id == book_id))
     files = [Path(p) for p in (book.original_path, book.translated_path) if p]
     await db.execute(delete(Book).where(Book.id == book_id))
@@ -179,6 +180,29 @@ async def get_preview(book_id: int, chapter_index: int = 0, db: AsyncSession = D
         "translated_text": translated_text,
         "original_html": doc.render(chapter_index, None) or "",
     }
+
+
+@router.get("/books/{book_id}/bookmarks")
+async def get_bookmarks(book_id: int, db: AsyncSession = Depends(get_db)):
+    """The passages translated with doubts, and what the final review decided."""
+    rows = await db.execute(
+        select(Bookmark).where(Bookmark.book_id == book_id).order_by(Bookmark.unit, Bookmark.block)
+    )
+    return [
+        {
+            "id": b.id,
+            "unit": b.unit,
+            "block": b.block,
+            "quote": b.quote,
+            "reason": b.reason,
+            "source": b.source,
+            "translation": b.translation,
+            "status": b.status,
+            "resolution": b.resolution,
+            "note": b.note,
+        }
+        for b in rows.scalars()
+    ]
 
 
 @router.get("/books/{book_id}/progress")

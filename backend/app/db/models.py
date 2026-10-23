@@ -106,6 +106,25 @@ class CompendiumRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Bookmark(Base):
+    """A passage the translator was unsure about, revisited by the final doubt review."""
+
+    __tablename__ = "bookmarks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    book_id = Column(Integer, ForeignKey("books.id"), nullable=False)
+    unit = Column(Integer, nullable=False)  # Chapter.order_index
+    block = Column(Integer, nullable=False)  # index in the unit's block_translations
+    quote = Column(Text, nullable=False)  # the source words in doubt
+    reason = Column(Text, nullable=False)
+    source = Column(Text, nullable=True)  # the block's source text
+    translation = Column(Text, nullable=True)  # its translation when flagged
+    status = Column(String(10), nullable=False, default="open")  # open, fixed, kept
+    resolution = Column(Text, nullable=True)  # the corrected translation, when fixed
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TranslationJob(Base):
     __tablename__ = "translation_jobs"
 

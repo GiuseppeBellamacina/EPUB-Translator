@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.llm_factory import structured_chain
 from app.knowledge.compendium import render
-from app.models.schemas import CompendiumEntry, GlossaryItem, ReviewResult
+from app.models.schemas import CompendiumEntry, DoubtResolution, GlossaryItem, ReviewResult
 
 REVIEW_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -129,3 +129,71 @@ async def review_translation(
     )
 
     return result
+
+
+DOUBT_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You revisit a passage of a translated book whose translator was unsure about \
+something. The whole book is translated now: the GLOSSARY and COMPENDIUM below are final and \
+tell what was not known then (a character's gender, who someone is, how a term is translated).
+
+Decide for each DOUBT whether the TRANSLATION is right. If it is, return translation null. If \
+not, return the corrected translation of the whole passage: one paragraph, the same meaning, \
+every inline placeholder like <1>...</1> or <2/> kept, changing only what the doubts concern \
+(agreements, pronouns, a term). The passage may end mid-sentence: so must the translation.
+
+{style_instructions}""",
+        ),
+        (
+            "human",
+            """GLOSSARY:
+{glossary}
+
+COMPENDIUM:
+{compendium}
+
+TEXT BEFORE THE PASSAGE ({source_language}):
+{previous}
+
+PASSAGE ({source_language}):
+{original_text}
+
+TRANSLATION ({target_language}):
+{translated_text}
+
+DOUBTS:
+{doubts}""",
+        ),
+    ]
+)
+
+
+async def resolve_doubts(
+    llm: BaseChatModel,
+    original_text: str,
+    translated_text: str,
+    doubts: list[str],
+    glossary: list[GlossaryItem],
+    compendium: list[CompendiumEntry],
+    source_language: str,
+    target_language: str,
+    style_instructions: str = "",
+    previous: str = "",
+) -> DoubtResolution:
+    """End-of-book review of one passage translated with doubts (``"quote: reason"`` lines)."""
+    chain = structured_chain(DOUBT_PROMPT, llm, DoubtResolution)
+    return await chain.ainvoke(
+        {
+            "original_text": original_text,
+            "translated_text": translated_text,
+            "doubts": "\n".join(f"- {d}" for d in doubts),
+            "glossary": _format_glossary(glossary),
+            "compendium": render(compendium),
+            "previous": previous or "(Start of chapter)",
+            "style_instructions": _format_style(style_instructions),
+            "source_language": source_language,
+            "target_language": target_language,
+        }
+    )

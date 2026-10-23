@@ -6,6 +6,7 @@ import {
   api,
   type BookDetail,
   type BookProgress,
+  type Bookmark,
   type CompendiumItem,
   type GlossaryEntry,
   type Provider,
@@ -18,6 +19,7 @@ import { useTranslationWs } from "../hooks/useTranslationWs";
 import { ActivityLog } from "../components/ActivityLog";
 import { CostValue } from "../components/CostEstimate";
 import { CompendiumEditor } from "../components/CompendiumEditor";
+import { DoubtsPanel } from "../components/DoubtsPanel";
 import { GlossaryEditor } from "../components/GlossaryEditor";
 import { LiveView } from "../components/LiveView";
 import { ProgressPanel } from "../components/ProgressPanel";
@@ -34,6 +36,7 @@ export function TranslatePage() {
   const [progress, setProgress] = useState<BookProgress | null>(null);
   const [settings, setSettings] = useState<RunSettings>(() => settingsFrom(null, []));
   const [compendium, setCompendium] = useState<CompendiumItem[]>([]);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [panel, setPanel] = useState<"glossary" | "compendium" | null>(null);
   const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style } = settings;
 
@@ -42,6 +45,7 @@ export function TranslatePage() {
     api.getProgress(id).then(setProgress);
     api.getGlossary(id).then(setGlossary);
     api.getCompendium(id).then(setCompendium);
+    api.getBookmarks(id).then(setBookmarks);
   }, [id]);
 
   const {
@@ -63,9 +67,11 @@ export function TranslatePage() {
       api.getGlossary(id),
       api.getProgress(id),
       api.getCompendium(id),
+      api.getBookmarks(id),
     ]).then(
-      ([b, p, g, prog, c]) => {
+      ([b, p, g, prog, c, d]) => {
         if (!active) return;
+        setBookmarks(d);
         setBook(b);
         setProviders(p);
         setGlossary(g);
@@ -99,6 +105,9 @@ export function TranslatePage() {
     }
     if (latest?.event === "compendium_update" || latest?.event === "analysis_complete") {
       api.getCompendium(id).then(setCompendium);
+    }
+    if (latest?.event === "doubt_flagged" || latest?.event === "doubt_resolved") {
+      api.getBookmarks(id).then(setBookmarks);
     }
   }, [latest, id]);
 
@@ -224,7 +233,7 @@ export function TranslatePage() {
                   <div className="text-[13px] text-muted">{count}</div>
                 </div>
                 <Button size="sm" onClick={() => setPanel(key)} className="self-start">
-                  {running ? "View" : "Edit"}
+                  Edit
                 </Button>
               </div>
             ))}
@@ -244,6 +253,7 @@ export function TranslatePage() {
           <ProgressPanel progress={progress} unitName={unitName} unitAbbr={unitAbbr} spent={spent} />
           {progress?.queue && <QueueProgress items={progress.queue.items} bookId={id} />}
           <LiveView chunks={chunks} unitName={isPdf ? "Page" : "Chapter"} targetLanguage={targetLang} />
+          {bookmarks.length > 0 && <DoubtsPanel bookmarks={bookmarks} unitName={isPdf ? "Page" : "Chapter"} />}
           <ActivityLog events={events} unitAbbr={unitAbbr} />
         </div>
       </div>
