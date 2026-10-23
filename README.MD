@@ -9,10 +9,14 @@ gender of every character consistent from the first page to the last.
 ## Features
 
 - **Same format, same layout**: EPUB in → EPUB out, PDF in → PDF out. Structure, images, inline formatting and page layout are kept; PDF text is re-typeset in place with metric-compatible fonts (subset, so the file stays the size of the original).
-- **Agentic pipeline on LangGraph**: analysis → per chunk *context → translate → review → learn → finalize* ([diagram below](#how-a-chapter-is-translated)). A reviewer flags only major issues and the chunk is retranslated with them.
-- **Glossary**: built while translating, editable, enforced; near-duplicates (*Demon Kings* / *Demon King*, *Kingdom of Asura* / *Asura Kingdom*, spelling variants) are recognised and never added twice.
-- **Compendium**: characters with their gender, aliases and translation notes, plus places and other recurring elements. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue.
-- **Queues**: upload several books at once, translate them one after another on the server, add books to a running queue, and carry glossary and compendium from one book to the next (a series). The translate page follows the queue to its next book.
+- **Agentic pipeline on LangGraph**: analysis → per chunk *context → translate → review → learn → finalize* → doubt review ([diagram below](#how-a-chapter-is-translated)). A reviewer flags only major issues and the chunk is retranslated with them.
+- **Glossary**: built while translating, enforced; near-duplicates (*Demon Kings* / *Demon King*, *Kingdom of Asura* / *Asura Kingdom*, spelling variants) are recognised and never added twice. Each prompt gets only the terms its passage uses (plurals and possessives included), the passage's own first.
+- **Compendium**: characters with their gender, aliases and translation notes, plus places and other recurring elements. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue. A guessed gender is corrected when the text proves otherwise (the quote is kept as evidence).
+- **Edit while translating**: change or delete a single glossary term or compendium entry at any time; the running job uses it from the next chunk.
+- **Doubts**: the translator bookmarks what it had to guess (a gender not revealed yet, who *she* is, an unknown term); a corrected gender bookmarks the passages already translated. At the end of the book a dedicated review revisits them with everything learned since and fixes what was wrong.
+- **Fewer, fuller calls**: chunks of a configurable size (default ~1000 tokens); short PDF pages are translated together, so a sentence crossing pages stays in one call.
+- **Switches**: turn the analysis, glossary (use / learn / enforce), compendium (use / learn), per-chunk review and doubt review on or off per run.
+- **Queues**: upload several books at once, translate them in order or in parallel on the server, reorder them by drag and drop, add books to a running queue, and share glossary and compendium live across a series. The translate page follows the queue to its next book.
 - **Resumable**: progress is checkpointed per chunk. Pause, a closed page, a crash or a restart never lose finished work; failed parts are retried on resume.
 - **Live view**: progress, ETA, cost so far, the current passage side by side and a filterable activity log.
 - **Cost estimate** per model before you start, from the book's real chunks and daily-updated prices.
@@ -30,10 +34,10 @@ Each chapter (or PDF page) is split into chunks of whole paragraphs and runs thr
 | **context** | Picks the glossary terms and compendium entries the chunk mentions — also in the text right before it, since a *she* may refer to someone named earlier. |
 | **translate** | Translates the chunk (one output paragraph per source paragraph, inline markup kept as placeholders) and, in the same call, reports new terms and what the passage reveals about characters and places. |
 | **review** | Optional. Checks meaning, omissions, glossary and gender against the compendium; only *major* issues reject the chunk, which is retranslated with them. |
-| **learn** | Merges the new terms (near-duplicates rejected) and the compendium updates (only facts the text states; your own edits are never changed). |
+| **learn** | Merges the new terms (near-duplicates rejected) and the compendium updates (only facts the text states; a known gender changes only with a quote that proves it; your own edits are never changed), and bookmarks the translator's doubts. |
 | **finalize** | Enforces the glossary and saves the checkpoint used to resume. |
 
-Before the first chapter, an analysis of the opening pages seeds the glossary and the compendium with the main terms and characters. Chapters run concurrently (bounded), sharing the same glossary and compendium.
+Before the first chapter, an analysis of the opening pages seeds the glossary and the compendium with the main terms and characters. Chapters run concurrently (bounded), sharing the same glossary and compendium; consecutive short PDF pages go through the graph together. When every chapter is done, the **doubt review** sends each bookmarked passage, with the final glossary and compendium, to the review model; a fix is applied only if it keeps the paragraph and its inline markup. Then the book is saved.
 
 ## Screenshots
 
@@ -94,6 +98,7 @@ providers:                 # upserted by name; skipped if their key is missing f
 
 translation:               # defaults for every job
   max_concurrency: 2       # chapters translated in parallel
+  chunk_tokens: 1000       # text per call (300–3000); short PDF pages are grouped up to it
   requests_per_second: 0.5
   llm_max_retries: 5       # SDK retries with backoff on 429/5xx
   chain_retries: 3         # retries of a whole call (invalid structured output)
