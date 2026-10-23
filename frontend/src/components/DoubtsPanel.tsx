@@ -14,14 +14,14 @@ export function DoubtsPanel({ bookmarks, unitName }: { bookmarks: Bookmark[]; un
   return (
     <Card aria-labelledby="doubts-title" className="flex flex-col gap-3 p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Heading id="doubts-title">Doubts</Heading>
+        <Heading id="doubts-title">Doubts and fixes</Heading>
         <span className="text-[13px] text-muted">
           {count("open")} open · {count("fixed")} fixed · {count("kept")} kept
         </span>
       </div>
       <p className="m-0 text-sm text-muted">
-        Places where the translator had to guess. They are reviewed at the end of the book, when
-        the glossary and the compendium are complete.
+        Places where the translator had to guess, and passages touched by a change to the glossary
+        or the compendium. Each is rechecked on its own, with everything known by then.
       </p>
       <ul className="m-0 flex max-h-96 list-none flex-col gap-2 overflow-auto p-0">
         {bookmarks.map((b) => (

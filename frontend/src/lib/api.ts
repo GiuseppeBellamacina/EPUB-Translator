@@ -1,3 +1,4 @@
+import type { FixResult } from "./fixes";
 const API_BASE = "/api";
 
 const STATUS_MESSAGES: Record<number, string> = {
@@ -116,15 +117,16 @@ export const api = {
     }),
   // single entries: also while translating (the running job uses them at once)
   editGlossaryEntry: (bookId: number, id: number, entry: GlossaryEntryCreate) =>
-    request<GlossaryEntry>(`/glossary/${bookId}/entry/${id}`, { method: "PUT", body: JSON.stringify(entry) }),
+    request<GlossaryEntry & FixResult>(`/glossary/${bookId}/entry/${id}`, { method: "PUT", body: JSON.stringify(entry) }),
   deleteGlossaryEntry: (bookId: number, id: number) =>
     request(`/glossary/${bookId}/entry/${id}`, { method: "DELETE" }),
   saveCompendiumEntry: (bookId: number, entry: CompendiumItem) =>
-    // bookmarked: translated passages naming it, rechecked by the doubt review (gender changed)
-    request<CompendiumItem & { bookmarked?: number }>(`/compendium/${bookId}/entry${entry.id ? `/${entry.id}` : ""}`, {
+    request<CompendiumItem & FixResult>(`/compendium/${bookId}/entry${entry.id ? `/${entry.id}` : ""}`, {
       method: entry.id ? "PUT" : "POST",
       body: JSON.stringify(entry),
     }),
+  /** review the book's open bookmarks now (a fix-only run for a finished book) */
+  startFixes: (bookId: number) => request<{ started: boolean }>(`/books/${bookId}/fixes`, { method: "POST" }),
   deleteCompendiumEntry: (bookId: number, id: number) =>
     request(`/compendium/${bookId}/entry/${id}`, { method: "DELETE" }),
 

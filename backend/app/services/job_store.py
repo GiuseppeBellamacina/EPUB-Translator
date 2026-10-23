@@ -99,7 +99,14 @@ class JobStore:
                 select(Bookmark).where(Bookmark.book_id == self.book_id, Bookmark.status == "open")
             )
             state.bookmarks = [
-                {"unit": b.unit, "block": b.block, "quote": b.quote, "reason": b.reason}
+                {
+                    "unit": b.unit,
+                    "block": b.block,
+                    "quote": b.quote,
+                    "reason": b.reason,
+                    "old_text": b.old_text,
+                    "new_text": b.new_text,
+                }
                 for b in rows.scalars()
             ]
             for i, chapter in chapters.items():
@@ -186,17 +193,21 @@ class JobStore:
             await db.commit()
 
     async def _save_doubts(self, event: TranslationProgress) -> None:
-        """New bookmarks; a chunk translated again after a pause flags the same ones."""
+        """New bookmarks. A chunk translated again after a pause flags the same ones: open
+        duplicates are skipped (a closed one does not count, the same change may come again)."""
         async with async_session() as db:
             rows = await db.execute(
-                select(Bookmark.block, Bookmark.quote).where(
-                    Bookmark.book_id == self.book_id, Bookmark.unit == event.chapter_index
+                select(Bookmark.block, Bookmark.quote, Bookmark.reason).where(
+                    Bookmark.book_id == self.book_id,
+                    Bookmark.unit == event.chapter_index,
+                    Bookmark.status == "open",
                 )
             )
             known = set(rows.all())
             for doubt in event.data["doubts"]:
-                if (doubt["block"], doubt["quote"]) not in known:
-                    known.add((doubt["block"], doubt["quote"]))
+                key = (doubt["block"], doubt["quote"], doubt["reason"])
+                if key not in known:
+                    known.add(key)
                     db.add(Bookmark(book_id=self.book_id, unit=event.chapter_index, **doubt))
             await db.commit()
 

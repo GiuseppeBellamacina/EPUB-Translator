@@ -179,18 +179,41 @@ def test_single_entries_are_edited_while_a_live_store_holds_the_book(client, sam
     assert client.delete(url).json() == {"status": "deleted"}
 
 
-def test_a_gender_changed_by_hand_bookmarks_the_translated_mentions(client, sample_epub):
+def _settled(client, book_id, timeout=20):
+    """Wait for the book's fix run: every bookmark closed."""
+    import time
+
+    end = time.time() + timeout
+    while time.time() < end:
+        marks = client.get(f"/api/books/{book_id}/bookmarks").json()
+        if marks and all(m["status"] != "open" for m in marks):
+            return marks
+        time.sleep(0.2)
+    raise AssertionError("bookmarks still open")
+
+
+def test_a_gender_change_fixes_the_translated_mentions_by_itself(client, sample_epub):
     provider, book = _upload(client, sample_epub)
-    _run(client, book["id"], provider["id"])
+    # a "start over" run with the doubt review off: the fix run must neither restart nor skip
+    _run(client, book["id"], provider["id"], restart=True, doubt_review=False)
     added = client.post(f"/api/compendium/{book['id']}/entry", json={"name": "Mara"}).json()
     url = f"/api/compendium/{book['id']}/entry/{added['id']}"
-    client.put(url, json={"name": "Mara", "gender": "male"})  # unknown → male: nothing to redo
-    assert client.get(f"/api/books/{book['id']}/bookmarks").json() == []
 
     edited = client.put(url, json={"name": "Mara", "gender": "female"}).json()
-    marks = client.get(f"/api/books/{book['id']}/bookmarks").json()
-    assert edited["bookmarked"] == len(marks) > 1
-    assert {m["reason"] for m in marks} == {"Compendium edited: Mara is female"}
+    assert edited["bookmarked"] == 3 and edited["fixing"] and not edited["confirm"]
+    marks = _settled(client, book["id"])
+    assert {m["reason"] for m in marks} == {"Mara: gender unknown → female"}
+    assert client.get(f"/api/books/{book['id']}").json()["status"] == "completed"
+    assert client.get(f"/api/books/{book['id']}").json()["translated_chapters"] == 4
+
+    again = client.put(url, json={"name": "Mara", "gender": "male"}).json()  # not deduped away
+    assert again["bookmarked"] == 3
+    _settled(client, book["id"])
+
+    notes = client.put(url, json={"name": "Mara", "gender": "male", "notes": "Old keeper."}).json()
+    assert notes["confirm"] and not notes["fixing"]  # notes: asks first
+    assert client.post(f"/api/books/{book['id']}/fixes").json() == {"started": True}
+    _settled(client, book["id"])
 
 
 def test_deleting_a_term_removes_it_from_the_series_unless_edited_there(client, sample_epub):

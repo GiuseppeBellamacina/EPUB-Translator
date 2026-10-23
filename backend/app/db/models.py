@@ -119,6 +119,10 @@ class Bookmark(Base):
     reason = Column(Text, nullable=False)
     source = Column(Text, nullable=True)  # the block's source text
     translation = Column(Text, nullable=True)  # its translation when flagged
+    # a glossary change: the old translation of the term, replaced by the new one where it
+    # occurs as is (no model call); elsewhere the model fixes the passage
+    old_text = Column(Text, nullable=True)
+    new_text = Column(Text, nullable=True)
     status = Column(String(10), nullable=False, default="open")  # open, fixed, kept
     resolution = Column(Text, nullable=True)  # the corrected translation, when fixed
     note = Column(Text, nullable=True)
