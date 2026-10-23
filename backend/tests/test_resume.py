@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.agents.pipeline import TranslationPipeline
 from app.db.database import async_session
 from app.db.models import Book, BookStatus, Chapter, ChapterStatus, GlossaryEntry
+from app.knowledge.store import CompendiumStore, GlossaryStore
 from app.models.schemas import GlossaryItem, TranslationResult
 from app.services.chunker import SmartChunker
 from app.services.documents import open_document
@@ -28,7 +29,16 @@ async def book_id(db, sample_epub):
 async def run_job(book_id, path, llm, restart=False, stop_after=None, concurrency=2):
     """Translate like the WebSocket handler does, optionally pausing after N translations."""
     doc = open_document(path)
-    pipeline = TranslationPipeline(llm=llm, chunker=small_chunks(), enable_review=False)
+    store = JobStore(book_id)
+    resume = await store.prepare(doc.units, restart=restart)
+    glossaries, compendiums = await stores(book_id)
+    pipeline = TranslationPipeline(
+        llm=llm,
+        chunker=small_chunks(),
+        enable_review=False,
+        glossaries=glossaries,
+        compendiums=compendiums,
+    )
     if stop_after:
         default = llm._build_result
 
@@ -39,9 +49,6 @@ async def run_job(book_id, path, llm, restart=False, stop_after=None, concurrenc
 
         llm.handlers[TranslationResult] = handler
 
-    store = JobStore(book_id)
-    resume = await store.prepare(doc.units, restart=restart)
-    pipeline.set_glossary(resume.glossary)
     events = []
     async for event in translate_document(
         doc,
@@ -55,6 +62,17 @@ async def run_job(book_id, path, llm, restart=False, stop_after=None, concurrenc
         await store.handle(event)
         events.append(event)
     return events
+
+
+async def stores(book_id):
+    """The book's live glossary and compendium stores, loaded from the database."""
+    glossaries = GlossaryStore(f"book:{book_id}", {book_id})
+    compendiums = CompendiumStore(f"book:{book_id}", {book_id})
+    await glossaries.load()
+    await glossaries.join(book_id)  # learned terms are written to the book
+    await compendiums.load()
+    await compendiums.join(book_id)
+    return glossaries, compendiums
 
 
 def chunk_counts(path, previous: dict) -> tuple[int, int]:
@@ -145,8 +163,8 @@ async def test_learned_glossary_is_persisted_and_reloaded(book_id, sample_epub):
         new_terms=[GlossaryItem(source_term="Mara", target_term="Mara", do_not_translate=True)],
     )
     await run_job(book_id, sample_epub, llm, concurrency=1)
-    resume = await JobStore(book_id).prepare(open_document(sample_epub).units)
-    assert [g.source_term for g in resume.glossary] == ["Mara"]
+    glossaries, _ = await stores(book_id)
+    assert [g.source_term for g in glossaries.glossary.entries] == ["Mara"]
 
 
 @pytest.mark.parametrize("limit", [1, 2])
@@ -188,15 +206,15 @@ async def test_pause_does_not_wait_for_slow_model_calls(sample_epub, tmp_path, a
     assert not any(e.event_type == "job_complete" for e in events)
 
 
-async def test_prepare_drops_learned_near_duplicates_but_keeps_user_terms(book_id, sample_epub):
+async def test_loading_drops_learned_near_duplicates_but_keeps_user_terms(book_id, sample_epub):
     async with async_session() as s:
         for term, user in [("Mara's", False), ("Mara", True), ("the Lighthouse", False),
                            ("Lighthouse", False), ("lighthouse keeper", True)]:  # fmt: skip
             s.add(GlossaryEntry(book_id=book_id, source_term=term, target_term=term,
                                 user_edited=user))  # fmt: skip
         await s.commit()
-    resume = await JobStore(book_id).prepare(open_document(sample_epub).units)
-    assert [g.source_term for g in resume.glossary] == [
+    glossaries, _ = await stores(book_id)
+    assert [g.source_term for g in glossaries.glossary.entries] == [
         "Mara",
         "lighthouse keeper",
         "the Lighthouse",
@@ -224,11 +242,12 @@ async def test_compendium_is_persisted_reloaded_and_reset_on_restart(book_id, sa
         s.add(CompendiumRecord(book_id=book_id, name="Old Tom", user_edited=True))
         await s.commit()
 
-    resume = await JobStore(book_id).prepare(open_document(sample_epub).units)
-    assert [(c.name, c.gender) for c in resume.compendium_learned] == [("Mara", "female")]
-    assert [c.name for c in resume.compendium_user] == ["Old Tom"]
-
-    resume = await JobStore(book_id).prepare(open_document(sample_epub).units, restart=True)
-    assert resume.compendium_learned == [] and [c.name for c in resume.compendium_user] == [
-        "Old Tom"
+    _, compendiums = await stores(book_id)
+    assert [(c.name, c.gender) for c in compendiums.compendium.entries] == [
+        ("Old Tom", "unknown"),  # the user's first
+        ("Mara", "female"),
     ]
+
+    await JobStore(book_id).prepare(open_document(sample_epub).units, restart=True)
+    _, compendiums = await stores(book_id)
+    assert [c.name for c in compendiums.compendium.entries] == ["Old Tom"]

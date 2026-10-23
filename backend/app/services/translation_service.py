@@ -2,7 +2,7 @@
 Translation Service — translate a whole document, resumable and concurrent.
 
 Phases:
-1. Analysis (skipped when resuming with a stored analysis): seeds the glossary.
+1. Analysis (skipped when resuming with a stored analysis): seeds glossary and compendium.
 2. Units (chapters/pages) run as concurrent tasks, at most ``max_concurrency`` at
    a time; their events are merged into one stream. Units already completed are
    skipped; partially translated units resume from their per-block checkpoint.
@@ -97,8 +97,6 @@ async def translate_document(
                         "analysis": result.model_dump(
                             include={"genre", "tone", "characters", "summary"}
                         ),
-                        "glossary": [e.model_dump() for e in pipeline.glossary.entries],
-                        "compendium": [e.model_dump() for e in pipeline.compendium.entries],
                     },
                 )
             except Exception as e:
@@ -211,6 +209,5 @@ async def translate_document(
             "output_path": str(output_path),
             "filename": output_path.name,
             "failed_units": failed_units,
-            "glossary": [e.model_dump() for e in pipeline.glossary.entries],
         },
     )

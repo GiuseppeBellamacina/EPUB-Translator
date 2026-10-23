@@ -40,6 +40,10 @@ class Compendium:
     def __len__(self) -> int:
         return len(self._entries)
 
+    def clear(self) -> None:
+        """Empty in place (the graph keeps its reference), before reloading."""
+        self.__init__()
+
     def _find(self, entry: CompendiumEntry) -> int | None:
         for name in [entry.name, *entry.aliases]:
             known = self._names.find_duplicate(name)

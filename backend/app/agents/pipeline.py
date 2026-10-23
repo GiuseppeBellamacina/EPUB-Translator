@@ -39,8 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.agents.analyzer import analyze_context
 from app.agents.reviewer import review_translation
 from app.agents.translator_agent import split_paragraphs, translate_blocks
-from app.knowledge.compendium import Compendium
-from app.knowledge.glossary import Glossary
+from app.knowledge.store import CompendiumStore, GlossaryStore
 from app.models.schemas import AnalysisResult, CompendiumEntry, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker, TextBlock
 
@@ -120,11 +119,12 @@ def _previous(state: ChapterState) -> str:
 
 def build_chapter_graph(
     llm: BaseChatModel,
-    glossary: Glossary,
-    compendium: Compendium,
+    glossaries: GlossaryStore,
+    compendiums: CompendiumStore,
     review_llm: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """Compile the per-chapter graph for a given model and shared glossary/compendium."""
+    """Compile the per-chapter graph for a given model and the live knowledge stores."""
+    glossary, compendium = glossaries.glossary, compendiums.compendium  # read live
 
     def context_node(state: ChapterState) -> dict[str, Any]:
         text = _previous(state) + "\n" + state.chunks[state.chunk_index].text
@@ -247,11 +247,12 @@ def build_chapter_graph(
             )
         return updates
 
-    def learn_node(state: ChapterState) -> dict[str, Any]:
-        """Fold what the accepted translation reported into the glossary and compendium."""
+    async def learn_node(state: ChapterState) -> dict[str, Any]:
+        """Fold what the accepted translation reported into the glossary and compendium
+        (shared and persisted by the stores)."""
         writer = get_stream_writer()
         chunk = state.chunks[state.chunk_index]
-        accepted = glossary.add(state.current_new_terms, source_text=chunk.text)
+        accepted = await glossaries.learn(state.current_new_terms, source_text=chunk.text)
         if accepted:
             writer(
                 {
@@ -263,7 +264,7 @@ def build_chapter_graph(
                 }
             )
         # names may only occur in the text before the chunk ("she" in this chunk)
-        changed = compendium.merge(
+        changed = await compendiums.learn(
             state.current_compendium, source_text=_previous(state) + "\n" + chunk.text
         )
         if changed:
@@ -388,6 +389,8 @@ class TranslationPipeline:
         style_instructions: str = "",
         enable_review: bool = True,
         review_llm: BaseChatModel | None = None,
+        glossaries: GlossaryStore | None = None,
+        compendiums: CompendiumStore | None = None,
     ):
         self.llm = llm
         self.source_language = source_language
@@ -396,12 +399,21 @@ class TranslationPipeline:
         self.max_retries = max_retries
         self.style_instructions = style_instructions
         self.enable_review = enable_review
-        self.glossary = Glossary()
-        self.compendium = Compendium()
+        # live stores (shared with other books of a series); in memory when not given
+        self.glossaries = glossaries or GlossaryStore()
+        self.compendiums = compendiums or CompendiumStore()
         self.book_summary: str = ""
         self._cancelled = False
         self.cancelled = asyncio.Event()  # wakes a caller waiting on a slow model call
-        self._graph = build_chapter_graph(llm, self.glossary, self.compendium, review_llm)
+        self._graph = build_chapter_graph(llm, self.glossaries, self.compendiums, review_llm)
+
+    @property
+    def glossary(self):
+        return self.glossaries.glossary
+
+    @property
+    def compendium(self):
+        return self.compendiums.compendium
 
     def cancel(self):
         """Signal cancellation to stop processing."""
@@ -409,32 +421,28 @@ class TranslationPipeline:
         self.cancelled.set()
 
     def set_glossary(self, entries: list[GlossaryItem]):
-        """Seed the glossary (e.g., from user edits or previous sessions)."""
+        """Seed the glossary in memory (tests; jobs load the stores from the database)."""
         self.glossary.add(entries)
 
     def set_compendium(
         self, user: list[CompendiumEntry], learned: list[CompendiumEntry] | None = None
     ) -> None:
-        """Seed the compendium: the user's entries (never changed) first, then learned ones."""
+        """Seed the compendium in memory: the user's entries (never changed) first."""
         self.compendium.merge(user, user=True)
         self.compendium.merge(learned or [])
 
-    def add_glossary_entries(self, entries: list[GlossaryItem]) -> list[GlossaryItem]:
-        """Add new entries to glossary, never overriding existing ones."""
-        return self.glossary.add(entries)
-
     async def analyze_chapter(self, text: str) -> AnalysisResult:
-        """Run context analysis on a chapter and seed the glossary."""
+        """Run context analysis on the opening text and seed glossary and compendium."""
         result = await analyze_context(self.llm, text, self.source_language, self.target_language)
-        self.glossary.add(result.key_terms, source_text=text)
-        self.glossary.add(
+        await self.glossaries.learn(result.key_terms, source_text=text)
+        await self.glossaries.learn(
             [
                 GlossaryItem(source_term=term, target_term=term, do_not_translate=True)
                 for term in result.do_not_translate
             ],
             source_text=text,
         )
-        self.compendium.merge(result.entities, source_text=text)
+        await self.compendiums.learn(result.entities, source_text=text)
         return result
 
     async def translate_chapter(

@@ -60,7 +60,7 @@ function AddBooksDialog({
         <DialogPanel className="w-full max-w-lg rounded-lg bg-surface p-6 shadow-[0_24px_60px_rgba(27,36,51,0.18)]">
           <DialogTitle className="m-0 font-serif text-[26px] font-medium">Add books to this queue</DialogTitle>
           <p className="mb-4 mt-1 text-sm text-muted">
-            They run after its last book, with the same settings, and keep its glossary and
+            They run after its last book, with the same settings, and share its glossary and
             compendium when the queue does.
           </p>
           {candidates.length === 0 ? (
@@ -179,7 +179,7 @@ export function QueuePanel({
         // only waiting books move; they take each other's places
         const waiting = group.filter((i) => i.status === "pending" || i.status === "paused");
         const sortable = first.batch_id !== null && waiting.length > 1;
-        const carries = [first.keep_glossary && "keeps glossary", first.keep_compendium && "keeps compendium"]
+        const carries = [first.keep_glossary && "shared glossary", first.keep_compendium && "shared compendium"]
           .filter(Boolean)
           .join(" · ");
         return (
