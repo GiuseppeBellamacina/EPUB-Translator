@@ -25,8 +25,8 @@ from typing import Any
 from app.agents.pipeline import TranslationPipeline, TranslationProgress
 from app.agents.reviewer import resolve_doubts
 from app.agents.translator_agent import keep_unfinished, split_paragraphs
+from app.knowledge.glossary import replace_term
 from app.knowledge.matcher import TermMatcher
-from app.models.schemas import CompendiumEntry
 from app.services import app_settings
 from app.services.chunker import SmartChunker, TextBlock
 from app.services.documents import Document, Translations
@@ -92,40 +92,44 @@ def unit_groups(todo: list[int], blocks: dict, chunker: SmartChunker) -> list[li
     return groups
 
 
-def naming_blocks(
-    entries: list[CompendiumEntry],
+def mention_doubts(
+    names: list[str],
     translated: Translations,
     blocks_of: Callable[[int], list[TextBlock]],
-    reason: Callable[[CompendiumEntry], str],
+    **doubt: Any,
 ) -> dict[int, list[dict]]:
-    """The translated blocks naming an entry (name or alias), as doubts per unit: after a
-    gender change they may have the old agreements."""
+    """The breadcrumbs back to an entry: the translated blocks whose source names it (any of
+    ``names``: name and aliases, plurals and possessives folded), as doubts per unit.
+
+    The source is the index: a matcher over a whole book takes milliseconds and is always
+    current (aliases and entries learned later included), so nothing is stored per block.
+    """
     matcher = TermMatcher()
-    for i, entry in enumerate(entries):
-        for name in [entry.name, *entry.aliases]:
-            matcher.add(name, i)
+    for name in names:
+        matcher.add(name, 0)
     found: dict[int, list[dict]] = {}
     for unit, translations in sorted(translated.items()):
         for b, block in enumerate(blocks_of(unit)):
             if b < len(translations or []) and translations[b] is not None:
-                for i in matcher.find(block.text):
+                if matcher.find(block.text):
                     found.setdefault(unit, []).append(
-                        {
-                            "block": b,
-                            "quote": entries[i].name,
-                            "reason": reason(entries[i]),
-                            "source": block.text,
-                            "translation": translations[b],
-                        }
+                        {"block": b, "source": block.text, "translation": translations[b], **doubt}
                     )
     return found
 
 
-def doubt_keys(bookmarks: Iterable[dict]) -> dict[tuple[int, int], list[str]]:
-    keys: dict[tuple[int, int], list[str]] = {}
+def doubt_keys(bookmarks: Iterable[dict]) -> dict[tuple[int, int], list[dict]]:
+    """Doubts per (unit, block): quote, reason and, for a glossary change, old/new text."""
+    keys: dict[tuple[int, int], list[dict]] = {}
     for b in bookmarks:
-        keys.setdefault((b["unit"], b["block"]), []).append(f"{b['quote']}: {b['reason']}")
+        doubt = {k: b.get(k) for k in ("quote", "reason", "old_text", "new_text")}
+        if doubt not in (found := keys.setdefault((b["unit"], b["block"]), [])):
+            found.append(doubt)
     return keys
+
+
+def _line(doubt: dict) -> str:
+    return f"{doubt['quote']}: {doubt['reason']}"
 
 
 async def translate_document(
@@ -202,7 +206,7 @@ async def translate_document(
 
     # what is translated so far, per block: auto-bookmarks go only to translated blocks
     done: Translations = {i: list(t) for i, t in previous.items() if t}
-    doubts = doubt_keys(bookmarks or [])  # (unit, block) -> "quote: reason"
+    doubts = doubt_keys(bookmarks or [])  # (unit, block) -> [{quote, reason, ...}]
 
     def locate(group: list[int], block: int) -> tuple[int, int]:
         """(unit, block in it) of a block of a group's concatenated blocks."""
@@ -260,11 +264,15 @@ async def translate_document(
 
     def corrected_mentions(names: list[str]) -> list[TranslationProgress]:
         """A compendium gender was corrected: bookmark the translated blocks naming it."""
-        entries = [e for e in pipeline.compendium.entries if e.name in names]
-        found = naming_blocks(
-            entries, done, unit_blocks, lambda e: f"Compendium corrected: {e.name} is {e.gender}"
-        )
-        return [flagged(unit, doubts) for unit, doubts in found.items()]
+        events = []
+        for e in pipeline.compendium.entries:
+            if e.name in names:
+                reason = f"Compendium corrected: {e.name} is {e.gender}"
+                found = mention_doubts(
+                    [e.name, *e.aliases], done, unit_blocks, quote=e.name, reason=reason
+                )
+                events += [flagged(unit, doubts) for unit, doubts in found.items()]
+        return events
 
     def saved(i: int, translations: list[str | None]) -> TranslationProgress:
         return TranslationProgress(
@@ -363,9 +371,10 @@ async def translate_document(
 
     def remember(event: TranslationProgress) -> TranslationProgress:
         if event.event_type == "doubt_flagged":
-            for d in event.data["doubts"]:
-                key = (event.chapter_index, d["block"])
-                doubts.setdefault(key, []).append(f"{d['quote']}: {d['reason']}")
+            for key, found in doubt_keys(
+                {"unit": event.chapter_index, **d} for d in event.data["doubts"]
+            ).items():
+                doubts.setdefault(key, []).extend(d for d in found if d not in doubts[key])
         return event
 
     groups = unit_groups([i for i in range(total) if i not in completed], blocks, chunker)
@@ -374,37 +383,52 @@ async def translate_document(
     if pipeline._cancelled:
         return
 
-    # Phase 3: doubt review (with the bookmarks added from the editor meanwhile)
-    for key, texts in doubt_keys(pipeline.added_bookmarks).items():
-        doubts.setdefault(key, []).extend(texts)
-    pending = [
-        (unit, block)
-        for unit, block in sorted(doubts)
-        if (results.get(unit) or [])[block : block + 1] not in ([], [None])
-    ]
-    if pipeline.doubt_review and pending:
-        yield TranslationProgress(
-            event_type="doubt_review_start",
-            total_chapters=total,
-            message=f"Reviewing {len(pending)} passage(s) translated with doubts",
-        )
-        touched: set[int] = set()
-        f = pipeline.features
-        limits = app_settings.load()
+    # Phase 3: doubt review, in rounds: bookmarks added meanwhile (an edit in the UI while
+    # this runs) join the next round
+    touched: set[int] = set()
+    handled: dict[tuple[int, int], list[dict]] = {}
+    f = pipeline.features
 
-        async def review(unit: int, block: int, queue: Queue) -> None:
-            source = unit_blocks(unit)[block].text
-            before = unit_blocks(unit)[block - 1].text if block else ""
-            after = "\n\n".join(b.text for b in unit_blocks(unit)[block + 1 : block + 2])
-            around = before + "\n" + after  # names said just before or after the passage
-            current = results[unit][block]
+    def translated(key: tuple[int, int]) -> bool:
+        unit, block = key
+        return (results.get(unit) or [])[block : block + 1] not in ([], [None])
+
+    def next_round() -> list[tuple[int, int]]:
+        for key, found in doubt_keys(pipeline.added_bookmarks).items():
+            doubts.setdefault(key, []).extend(d for d in found if d not in doubts[key])
+        pipeline.added_bookmarks.clear()
+        return [
+            key
+            for key, found in sorted(doubts.items())
+            if translated(key) and any(d not in handled.get(key, []) for d in found)
+        ]
+
+    async def review(unit: int, block: int, queue: Queue) -> None:
+        source = unit_blocks(unit)[block].text
+        before = unit_blocks(unit)[block - 1].text if block else ""
+        after = "\n\n".join(b.text for b in unit_blocks(unit)[block + 1 : block + 2])
+        around = before + "\n" + after  # names said just before or after the passage
+        current = results[unit][block]
+        found = doubts[(unit, block)]
+        # a glossary change: replace the old translation of the term where it occurs as is
+        text = current
+        for d in found:
+            if d.get("old_text") and d.get("new_text"):
+                text = replace_term(text, d["old_text"], d["new_text"])
+        exact = text != current and all(d.get("old_text") and d.get("new_text") for d in found)
+        fixed, note = None, ""
+        if exact:  # every change done without the model
+            fixed = text
+            note = "Replaced " + ", ".join(f"{d['old_text']} → {d['new_text']}" for d in found)
+        else:
+            limits = app_settings.load()
             async with semaphore:
                 try:
                     resolution = await resolve_doubts(
                         pipeline.review_llm,
                         original_text=source,
-                        translated_text=current,
-                        doubts=sorted(set(doubts[(unit, block)])),
+                        translated_text=text,
+                        doubts=sorted({_line(d) for d in found}),
                         glossary=(
                             pipeline.glossary.relevant(source, around, limits.glossary_limit)
                             if f.use_glossary
@@ -431,39 +455,53 @@ async def translate_document(
                         )
                     )
                     return
-            fixed, note = None, resolution.note.strip()
-            if resolution.translation and resolution.translation.strip() != current:
-                text = keep_unfinished(source, " ".join(split_paragraphs(resolution.translation)))
-                if sorted(_PLACEHOLDER.findall(text)) == sorted(_PLACEHOLDER.findall(source)):
+            note = resolution.note.strip()
+            if resolution.translation and resolution.translation.strip() != text:
+                new = keep_unfinished(source, " ".join(split_paragraphs(resolution.translation)))
+                if sorted(_PLACEHOLDER.findall(new)) == sorted(_PLACEHOLDER.findall(source)):
                     glossary = pipeline.glossary.relevant(source) if f.enforce_glossary else []
-                    fixed = pipeline.glossary.enforce(text, glossary)
+                    text = pipeline.glossary.enforce(new, glossary)
                 else:
                     note = "Kept: the correction lost inline markup. " + note
-            if fixed:
-                results[unit][block] = fixed
-                touched.add(unit)
-            await queue.put(
-                TranslationProgress(
-                    event_type="doubt_resolved",
-                    chapter_index=unit,
-                    total_chapters=total,
-                    message=f"Doubt on chapter {unit + 1}: {'fixed' if fixed else 'kept'}",
-                    data={
-                        "block": block,
-                        "status": "fixed" if fixed else "kept",
-                        "translation": fixed,
-                        "note": note,
-                    },
-                )
+            fixed = text if text != current else None
+        if fixed:
+            results[unit][block] = fixed
+            touched.add(unit)
+        await queue.put(
+            TranslationProgress(
+                event_type="doubt_resolved",
+                chapter_index=unit,
+                total_chapters=total,
+                message=f"Doubt on chapter {unit + 1}: {'fixed' if fixed else 'kept'}",
+                data={
+                    "block": block,
+                    "status": "fixed" if fixed else "kept",
+                    "translation": fixed,
+                    "note": note,
+                },
             )
+        )
 
+    started = False
+    while pipeline.doubt_review and (pending := next_round()):
+        if not started:
+            started = True
+            yield TranslationProgress(
+                event_type="doubt_review_start",
+                total_chapters=total,
+                message=f"Reviewing {len(pending)} passage(s) translated with doubts",
+            )
+        for key in pending:
+            handled[key] = list(doubts[key])
         async for event in stream(lambda queue: [review(u, b, queue) for u, b in pending]):
             yield event
-        # fixes made before a pause are saved too: their bookmarks are closed
-        for unit in sorted(touched):
-            yield saved(unit, results[unit])
         if pipeline._cancelled:
-            return
+            break
+    # fixes made before a pause are saved too: their bookmarks are closed
+    for unit in sorted(touched):
+        yield saved(unit, results[unit])
+    if pipeline._cancelled:
+        return
 
     # Phase 4: output
     yield TranslationProgress(event_type="building_epub", message="Building translated file...")

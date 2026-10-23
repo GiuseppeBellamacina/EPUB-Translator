@@ -37,6 +37,11 @@ def _match_case(source: str, replacement: str) -> str:
     return replacement
 
 
+def replace_term(text: str, old: str, new: str) -> str:
+    """Every whole-word occurrence of ``old`` in ``text`` becomes ``new`` (casing kept)."""
+    return _word_pattern(old).sub(lambda m: _match_case(m.group(0), new), text)
+
+
 class Glossary:
     def __init__(self, entries: list[GlossaryItem] | None = None):
         self._entries: dict[str, GlossaryItem] = {}

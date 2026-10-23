@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { api, COMPENDIUM_KINDS, GENDERS, type CompendiumItem } from "../lib/api";
+import { followFixes } from "../lib/fixes";
 import { inputClass } from "../lib/styles";
 import { cn } from "../lib/utils";
 import { Select } from "./controls";
@@ -96,14 +97,10 @@ export function CompendiumEditor({
     if (!entry.name) return setError("An entry needs a name");
     setBusyRow(index);
     await attempt(async () => {
-      const { bookmarked, ...stored } = await api.saveCompendiumEntry(bookId, entry);
+      const { bookmarked, fixing, confirm, books, ...stored } = await api.saveCompendiumEntry(bookId, entry);
       setEntries((prev) => prev.map((e, i) => (i === index ? stored : e)));
       toggle(index);
-      setNotice(
-        bookmarked
-          ? `${bookmarked} translated ${bookmarked === 1 ? "passage names" : "passages name"} ${stored.name}: the doubt review will recheck them.`
-          : null,
-      );
+      setNotice(await followFixes({ bookmarked, fixing, confirm, books }, stored.name));
     }, `Could not save ${entry.name}`);
     setBusyRow(null);
   };

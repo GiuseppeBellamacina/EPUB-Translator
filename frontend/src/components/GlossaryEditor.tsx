@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { api, type GlossaryEntry, type GlossaryEntryCreate } from "../lib/api";
+import { followFixes } from "../lib/fixes";
 import { inputClass } from "../lib/styles";
 import { cn } from "../lib/utils";
 import { Checkbox } from "./controls";
@@ -41,6 +42,7 @@ export function GlossaryEditor({ bookId, initial, running, onSaved }: GlossaryEd
   const [busyRow, setBusyRow] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const update = (index: number, patch: Partial<EditableEntry>) => {
     setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch, dirty: true } : e)));
@@ -75,6 +77,7 @@ export function GlossaryEditor({ bookId, initial, running, onSaved }: GlossaryEd
     await attempt(async () => {
       const stored = id ? await api.editGlossaryEntry(bookId, id, entry) : await api.addGlossaryEntry(bookId, entry);
       setEntries((prev) => prev.map((e, i) => (i === index ? editable(stored) : e)));
+      setNotice(await followFixes(stored, stored.source_term));
     }, `Could not save ${entry.source_term}`);
     setBusyRow(null);
   };
@@ -169,6 +172,7 @@ export function GlossaryEditor({ bookId, initial, running, onSaved }: GlossaryEd
       </div>
 
       {error && <p className="m-0 text-sm text-danger">{error}</p>}
+      {notice && <p className="m-0 text-sm text-muted">{notice}</p>}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button

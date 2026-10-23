@@ -6,6 +6,7 @@ from app.core.fake_llm import _extract_source_text, meow_transform
 from app.db.database import async_session
 from app.db.models import Bookmark, Chapter
 from app.models.schemas import CompendiumEntry, Doubt, DoubtResolution, TranslationResult
+from app.services.documents import open_document
 from tests.conftest import translate
 from tests.test_resume import book_id, run_job  # noqa: F401 (fixture)
 
@@ -106,3 +107,54 @@ async def test_an_unresolved_doubt_stays_open_and_is_reviewed_on_resume(
     async with async_session() as db:
         chapter = await db.scalar(select(Chapter).where(Chapter.order_index == closed.unit))
     assert chapter.block_translations[closed.block] == closed.resolution
+
+
+async def test_a_glossary_change_is_replaced_as_is_and_the_rest_goes_to_the_model(llm, sample_epub):
+    events = await translate(sample_epub, TranslationPipeline(llm=llm, enable_review=False))
+    previous = {
+        e.chapter_index: e.data["translations"] for e in events if e.event_type == "chapter_saved"
+    }
+    unit = next(u for u, t in previous.items() if any("lighthouse" in x for x in t))
+    exact = next(b for b, x in enumerate(previous[unit]) if "lighthouse" in x)
+    other = next(b for b, x in enumerate(previous[unit]) if "lighthouse" not in x.lower())
+    change = {"quote": "lighthouse", "reason": "Glossary: lighthouse → faro", "new_text": "faro"}
+    bookmarks = [
+        {"unit": unit, "block": exact, "old_text": "lighthouse", **change},
+        {"unit": unit, "block": other, "old_text": "lighthouse", **change},  # not there as is
+    ]
+    llm.handlers[DoubtResolution] = fix
+    again = await translate(
+        sample_epub,
+        TranslationPipeline(llm=llm, enable_review=False),
+        previous=previous,
+        completed=set(previous),
+        analysis={"summary": ""},
+        bookmarks=bookmarks,
+    )
+    resolved = {e.data["block"]: e.data for e in again if e.event_type == "doubt_resolved"}
+    assert resolved[exact]["note"] == "Replaced lighthouse → faro"
+    assert (
+        "faro" in resolved[exact]["translation"]
+        and "lighthouse" not in resolved[exact]["translation"]
+    )
+    assert len(llm.calls_for(DoubtResolution)) == 1  # only the block without an exact match
+    out = open_document(again[-1].data["output_path"])
+    assert "faro" in out.text(unit)
+
+
+async def test_bookmarks_added_during_the_review_are_reviewed_in_the_same_run(llm, sample_epub):
+    llm.handlers[TranslationResult] = doubt_on_first_call
+    pipeline = TranslationPipeline(llm=llm, enable_review=False)
+
+    def late_edit(prompt, n):
+        if n == 1:  # an edit in the UI while the review runs
+            pipeline.added_bookmarks.append(
+                {"unit": 1, "block": 0, "quote": "Mara", "reason": "Mara: gender male → female"}
+            )
+        return fix(prompt, n)
+
+    llm.handlers[DoubtResolution] = late_edit
+    events = await translate(sample_epub, pipeline)
+    assert len(llm.calls_for(DoubtResolution)) == 2
+    assert "Mara: gender male → female" in llm.calls_for(DoubtResolution)[1]
+    assert events[-1].event_type == "job_complete"
