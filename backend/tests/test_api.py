@@ -6,9 +6,6 @@ from app.main import app
 
 @pytest.fixture
 def client(db):
-    from app.services.job_runner import recent_events
-
-    recent_events.clear()  # book ids restart with the fresh schema
     with TestClient(app) as c:
         yield c
 
@@ -37,7 +34,7 @@ def _run(client, book_id, provider_id, stop_on=None, **start):
 def test_stop_pauses_and_start_resumes(client, sample_epub, monkeypatch):
     from tests.conftest import ScriptedLLM
 
-    monkeypatch.setattr("app.services.job_runner.create_llm", lambda cfg: ScriptedLLM(delay=0.05))
+    monkeypatch.setattr("app.jobs.runner.create_llm", lambda cfg: ScriptedLLM(delay=0.05))
     provider, book = _upload(client, sample_epub)
 
     events = _run(client, book["id"], provider["id"], stop_on="chunk_done")

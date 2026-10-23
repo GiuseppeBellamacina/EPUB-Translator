@@ -1,12 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import router
+from app.api.routers import routers
 from app.api.websocket import ws_router
 from app.core.bootstrap import bootstrap_providers, load_config
 from app.core.config import settings
 from app.db.database import async_session, init_db
-from app.services import job_runner
+from app.jobs import jobs
 from app.services.job_store import recover_interrupted_jobs
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
@@ -19,7 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api")
+for router in routers:
+    app.include_router(router, prefix="/api")
 app.include_router(ws_router)
 
 
@@ -29,14 +30,15 @@ async def startup():
     settings.apply_overrides(load_config().get("translation") or {})
     await init_db()
     await recover_interrupted_jobs()
-    await job_runner.recover_queue()
+    jobs.reset()  # a fresh queue state for this app run
+    await jobs.recover()
     async with async_session() as db:
         await bootstrap_providers(db)
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    await job_runner.shutdown()  # the running book is paused with its progress saved
+    await jobs.scheduler.shutdown()  # running books are paused with their progress saved
 
 
 @app.get("/health")

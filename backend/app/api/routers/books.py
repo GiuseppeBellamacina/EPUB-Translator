@@ -1,4 +1,4 @@
-"""REST API routes for Translatio."""
+"""Books: upload, list, delete, detail, preview, progress, estimate, download."""
 
 import asyncio
 import shutil
@@ -8,27 +8,18 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routers.queue import queue_items
 from app.api.schemas import (
     BookDetailResponse,
     BookResponse,
     ChapterResponse,
-    GlossaryEntryCreate,
-    GlossaryEntryResponse,
-    GlossaryUpdate,
-    ProviderCreate,
-    ProviderModelsRequest,
-    ProviderResponse,
-    ProviderUpdate,
-    TestConnectionRequest,
 )
 from app.core.bootstrap import load_config
 from app.core.config import settings
-from app.core.encryption import decrypt_api_key, encrypt_api_key
-from app.core.llm_factory import LLMConfig, test_llm_connection
+from app.core.encryption import decrypt_api_key
 from app.db.database import get_db
 from app.db.models import (
     Book,
@@ -41,114 +32,18 @@ from app.db.models import (
     QueueItem,
     TranslationJob,
 )
-from app.models.schemas import CompendiumEntry
-from app.services import app_settings, job_runner
+from app.jobs import jobs
 from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
-from app.services.job_runner import RunConfig, active_jobs, recent_events, run_started
 from app.services.model_catalog import list_models, price_for
 from app.services.pricing import ModelPrice, PriceTable, get_prices
 
 router = APIRouter()
 
 
-# === PROVIDERS ===
-
-
-@router.get("/providers", response_model=list[ProviderResponse])
-async def list_providers(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ProviderConfig).where(ProviderConfig.is_active.is_(True)))
-    return result.scalars().all()
-
-
-@router.post("/providers", response_model=ProviderResponse)
-async def create_provider(data: ProviderCreate, db: AsyncSession = Depends(get_db)):
-    provider = ProviderConfig(
-        name=data.name,
-        provider_type=data.provider_type,
-        api_key_encrypted=encrypt_api_key(data.api_key) if data.api_key else None,
-        base_url=data.base_url,
-        default_model=data.default_model,
-        params=data.params,
-    )
-    db.add(provider)
-    await db.commit()
-    await db.refresh(provider)
-    return provider
-
-
-@router.put("/providers/{provider_id}", response_model=ProviderResponse)
-async def update_provider(
-    provider_id: int, data: ProviderUpdate, db: AsyncSession = Depends(get_db)
-):
-    """Edit a provider. Editing a config.yaml provider makes it user-owned (bootstrap skips it)."""
-    provider = await db.get(ProviderConfig, provider_id)
-    if not provider:
-        raise HTTPException(404, "Provider not found")
-    changes = data.model_dump(exclude_unset=True)
-    api_key = changes.pop("api_key", None)
-    for field, value in changes.items():
-        setattr(provider, field, value)
-    if api_key is not None:  # None keeps the stored key, "" clears it
-        provider.api_key_encrypted = encrypt_api_key(api_key) if api_key else None
-    provider.source = "user"
-    await db.commit()
-    await db.refresh(provider)
-    return provider
-
-
-@router.delete("/providers/{provider_id}")
-async def delete_provider(provider_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ProviderConfig).where(ProviderConfig.id == provider_id))
-    provider = result.scalar_one_or_none()
-    if not provider:
-        raise HTTPException(404, "Provider not found")
-    await db.delete(provider)
-    await db.commit()
-    return {"status": "deleted"}
-
-
-@router.get("/providers/{provider_id}/models")
-async def provider_models(
-    provider_id: int, refresh: bool = False, db: AsyncSession = Depends(get_db)
-):
-    """Chat models the provider serves, listed live from its API (cached a few minutes)."""
-    provider = await db.get(ProviderConfig, provider_id)
-    if not provider:
-        raise HTTPException(404, "Provider not found")
-    api_key = decrypt_api_key(provider.api_key_encrypted) if provider.api_key_encrypted else None
-    try:
-        return await list_models(
-            provider.provider_type, api_key, provider.base_url, await get_prices(), refresh
-        )
-    except Exception as e:
-        raise HTTPException(502, f"Could not list models from {provider.name}: {e}")
-
-
-@router.post("/providers/models")
-async def unsaved_provider_models(data: ProviderModelsRequest):
-    """Models of a provider that is not saved yet; a failure also means a bad key or URL."""
-    try:
-        return await list_models(
-            data.provider_type, data.api_key or None, data.base_url or None, await get_prices()
-        )
-    except Exception as e:
-        raise HTTPException(502, f"Could not list models: {e}")
-
-
-@router.post("/providers/test")
-async def test_provider(data: TestConnectionRequest):
-    config = LLMConfig(
-        provider=data.provider_type,
-        model=data.model,
-        api_key=data.api_key,
-        base_url=data.base_url,
-        temperature=data.temperature,
-    )
-    result = await test_llm_connection(config)
-    return result
+router = APIRouter()
 
 
 # === BOOKS ===
@@ -214,7 +109,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
     book = await db.get(Book, book_id)
     if not book:
         raise HTTPException(404, "Book not found")
-    if book_id in active_jobs:
+    if jobs.is_running(book_id):
         raise HTTPException(409, "Pause the translation before deleting the book")
     for model in (Chapter, GlossaryEntry, CompendiumRecord, TranslationJob, QueueItem):
         await db.execute(delete(model).where(model.book_id == book_id))
@@ -224,7 +119,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
     for path in files:
         if path.resolve().is_relative_to(settings.data_dir.resolve()):  # only our own files
             path.unlink(missing_ok=True)
-    recent_events.pop(book_id, None)
+    jobs.events.recent.pop(book_id, None)
     return {"status": "deleted"}
 
 
@@ -298,7 +193,7 @@ async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
         )
     ).all()
     completed = sum(status == ChapterStatus.completed for _, status in rows)
-    running = book_id in active_jobs
+    running = jobs.is_running(book_id)
     job = (
         await db.execute(
             select(TranslationJob)
@@ -309,8 +204,8 @@ async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
     ).scalar_one_or_none()
 
     eta = None
-    if running and book_id in run_started:
-        start, done_at_start = run_started[book_id]
+    if running and book_id in jobs.runner.started:
+        start, done_at_start = jobs.runner.started[book_id]
         done_now = completed - done_at_start
         if done_now > 0:
             eta = (time.time() - start) / done_now * (book.total_chapters - completed)
@@ -326,7 +221,7 @@ async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
         ),
         "started_at": job.started_at.isoformat() if job and job.started_at else None,
         "eta_seconds": eta,
-        "recent_events": list(reversed(recent_events.get(book_id, []))),
+        "recent_events": jobs.events.log(book_id),
         # settings of the last run (older jobs did not keep them), to show and resume with
         "config": job.params if job and "provider_id" in (job.params or {}) else None,
         "queue_status": await db.scalar(
@@ -348,7 +243,7 @@ async def _book_queue(db: AsyncSession, book_id: int) -> dict | None:
     )
     if batch_id is None:
         return None
-    items = await _queue_items(db, QueueItem.batch_id == batch_id)
+    items = await queue_items(db, QueueItem.batch_id == batch_id)
     return {"batch_id": batch_id, "items": items} if len(items) > 1 else None
 
 
@@ -438,242 +333,3 @@ async def download_book(book_id: int, db: AsyncSession = Depends(get_db)):
         filename=f"translated_{book.filename}",
         media_type="application/pdf" if path.suffix == ".pdf" else "application/epub+zip",
     )
-
-
-# === GLOSSARY ===
-
-
-@router.get("/glossary/{book_id}", response_model=list[GlossaryEntryResponse])
-async def get_glossary(book_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(GlossaryEntry).where(GlossaryEntry.book_id == book_id))
-    return result.scalars().all()
-
-
-@router.put("/glossary/{book_id}")
-async def update_glossary(book_id: int, data: GlossaryUpdate, db: AsyncSession = Depends(get_db)):
-    # Delete existing entries
-    result = await db.execute(select(GlossaryEntry).where(GlossaryEntry.book_id == book_id))
-    for entry in result.scalars().all():
-        await db.delete(entry)
-
-    # Insert new entries
-    for entry_data in data.entries:
-        entry = GlossaryEntry(
-            book_id=book_id,
-            source_term=entry_data.source_term,
-            target_term=entry_data.target_term,
-            context=entry_data.context,
-            do_not_translate=entry_data.do_not_translate,
-            user_edited=True,
-        )
-        db.add(entry)
-
-    await db.commit()
-    return {"status": "updated", "count": len(data.entries)}
-
-
-# === COMPENDIUM ===
-
-
-class CompendiumItem(CompendiumEntry):
-    # the editor sends True for the entries the user changed: those are never touched by
-    # the translation again; untouched learned entries keep growing
-    user_edited: bool = True
-
-
-class CompendiumUpdate(BaseModel):
-    entries: list[CompendiumItem]
-
-
-@router.get("/compendium/{book_id}")
-async def get_compendium(book_id: int, db: AsyncSession = Depends(get_db)):
-    rows = await db.execute(
-        select(CompendiumRecord)
-        .where(CompendiumRecord.book_id == book_id)
-        .order_by(CompendiumRecord.id)
-    )
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "kind": r.kind,
-            "gender": r.gender,
-            "aliases": r.aliases or [],
-            "notes": r.notes,
-            "user_edited": bool(r.user_edited),
-        }
-        for r in rows.scalars()
-    ]
-
-
-@router.put("/compendium/{book_id}")
-async def update_compendium(
-    book_id: int, data: CompendiumUpdate, db: AsyncSession = Depends(get_db)
-):
-    """Replace the book's compendium with the edited list."""
-    if book_id in active_jobs:
-        raise HTTPException(409, "Pause the translation before editing the compendium")
-    await db.execute(delete(CompendiumRecord).where(CompendiumRecord.book_id == book_id))
-    for entry in data.entries:
-        db.add(CompendiumRecord(book_id=book_id, **entry.model_dump()))
-    await db.commit()
-    return {"status": "updated", "count": len(data.entries)}
-
-
-@router.post("/glossary/{book_id}/entry", response_model=GlossaryEntryResponse)
-async def add_glossary_entry(
-    book_id: int,
-    entry: GlossaryEntryCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    new_entry = GlossaryEntry(
-        book_id=book_id,
-        source_term=entry.source_term,
-        target_term=entry.target_term,
-        context=entry.context,
-        do_not_translate=entry.do_not_translate,
-        user_edited=True,
-    )
-    db.add(new_entry)
-    await db.commit()
-    await db.refresh(new_entry)
-    return new_entry
-
-
-# === QUEUE ===
-
-
-class QueueAdd(RunConfig):
-    book_ids: list[int]
-    keep_glossary: bool = False
-    keep_compendium: bool = False
-
-
-async def _queue_items(db: AsyncSession, *where) -> list[dict]:
-    """Queue items in order (optionally filtered), with their book's progress."""
-    rows = await db.execute(
-        select(QueueItem, Book)
-        .join(Book, Book.id == QueueItem.book_id)
-        .where(*where)
-        .order_by(QueueItem.position)
-    )
-    return [
-        {
-            "id": item.id,
-            "book_id": book.id,
-            "filename": book.filename,
-            "status": item.status,
-            "error": item.error,
-            "keep_glossary": item.keep_glossary,
-            "keep_compendium": bool(item.keep_compendium),
-            "batch_id": item.batch_id,
-            "config": item.config,
-            "completed_units": book.translated_chapters or 0,
-            "total_units": book.total_chapters,
-        }
-        for item, book in rows.all()
-    ]
-
-
-@router.get("/settings")
-async def get_settings():
-    """App settings, plus the translation defaults a provider's params override."""
-    return {
-        **app_settings.load().model_dump(),
-        "defaults": {
-            "requests_per_second": settings.requests_per_second,
-            "max_concurrency": settings.max_concurrency,
-            "max_retries": settings.llm_max_retries,
-        },
-    }
-
-
-@router.put("/settings")
-async def update_settings(data: app_settings.AppSettings):
-    app_settings.save(data)
-    if job_runner.queue_running():
-        job_runner.fill_workers()  # more books in parallel start now; fewer as books finish
-    return await get_settings()
-
-
-@router.get("/queue")
-async def get_queue(db: AsyncSession = Depends(get_db)):
-    """Queued books in order, with their status and progress."""
-    return {"running": job_runner.queue_running(), "items": await _queue_items(db)}
-
-
-@router.post("/queue")
-async def add_to_queue(data: QueueAdd):
-    """Append books (in the given order) and run the queue."""
-    config = RunConfig(**data.model_dump(exclude={"book_ids", "keep_glossary", "keep_compendium"}))
-    try:
-        items = await job_runner.enqueue(
-            data.book_ids, config, data.keep_glossary, keep_compendium=data.keep_compendium
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"queued": len(items)}
-
-
-class BatchAdd(BaseModel):
-    book_ids: list[int]
-
-
-@router.post("/queue/{batch_id}/books")
-async def add_to_batch(batch_id: int, data: BatchAdd):
-    """Add books to the end of an existing queue: same settings, carry-over continues."""
-    try:
-        items = await job_runner.enqueue(data.book_ids, batch_id=batch_id)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"queued": len(items)}
-
-
-class QueueOrder(BaseModel):
-    item_ids: list[int]
-
-
-@router.put("/queue/{batch_id}/order")
-async def reorder_batch(batch_id: int, data: QueueOrder):
-    """New order of a queue's waiting books (running and finished ones stay in place)."""
-    try:
-        await job_runner.reorder(batch_id, data.item_ids)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"status": "reordered"}
-
-
-@router.post("/queue/start")
-async def start_queue():
-    """Resume: paused books run again in their order."""
-    await job_runner.resume()
-    return {"running": True}
-
-
-@router.post("/queue/stop")
-async def stop_queue():
-    """Pause the running book; the rest of the queue waits for a start."""
-    job_runner.stop()
-    return {"running": False}
-
-
-@router.delete("/queue/{item_id}")
-async def remove_from_queue(item_id: int, db: AsyncSession = Depends(get_db)):
-    item = await db.get(QueueItem, item_id)
-    if not item:
-        raise HTTPException(404, "Not in the queue")
-    if item.status == "running":
-        raise HTTPException(409, "Pause the book before removing it")
-    await db.delete(item)
-    await db.commit()
-    return {"status": "removed"}
-
-
-@router.delete("/queue")
-async def clear_finished(db: AsyncSession = Depends(get_db)):
-    """Remove the books the queue has finished (done or failed)."""
-    rows = await db.execute(select(QueueItem).where(QueueItem.status.in_(("done", "failed"))))
-    for item in rows.scalars():
-        await db.delete(item)
-    await db.commit()
-    return {"status": "cleared"}

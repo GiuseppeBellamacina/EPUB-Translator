@@ -11,7 +11,7 @@ near-duplicates included), so the next chunks and the reviewer see it.
 
 import re
 
-from app.agents.similarity import TermIndex, content_words
+from app.knowledge.similarity import TermIndex, content_words
 from app.models.schemas import CompendiumEntry
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")

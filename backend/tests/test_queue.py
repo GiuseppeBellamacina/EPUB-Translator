@@ -13,10 +13,7 @@ from tests.conftest import ScriptedLLM
 
 @pytest.fixture
 def client(db, monkeypatch):
-    from app.services.job_runner import recent_events
-
-    recent_events.clear()  # book ids restart with the fresh schema
-    monkeypatch.setattr("app.services.job_runner.create_llm", lambda cfg: ScriptedLLM(delay=0.02))
+    monkeypatch.setattr("app.jobs.runner.create_llm", lambda cfg: ScriptedLLM(delay=0.02))
     with TestClient(app) as c:
         yield c
 
@@ -42,7 +39,7 @@ def _wait(client, until, timeout=30):
 
 def _slow(monkeypatch):
     """Slow calls, so a stop lands while the (tiny) sample book is still translating."""
-    monkeypatch.setattr("app.services.job_runner.create_llm", lambda cfg: ScriptedLLM(delay=0.15))
+    monkeypatch.setattr("app.jobs.runner.create_llm", lambda cfg: ScriptedLLM(delay=0.15))
 
 
 def _terms(client, book_id):
@@ -310,8 +307,9 @@ def test_books_run_in_parallel_but_a_carrying_queue_stays_in_order(
 
 
 def test_books_on_one_provider_share_its_rate_limiter():
-    from app.services.job_runner import _limiter_for
+    from app.jobs import jobs
 
-    assert _limiter_for(1, 0.5) is _limiter_for(1, 0.5)
-    assert _limiter_for(1, 0.5) is not _limiter_for(2, 0.5)
-    assert _limiter_for(1, 0) is None
+    limiter = jobs.runner.limiter_for
+    assert limiter(1, 0.5) is limiter(1, 0.5)
+    assert limiter(1, 0.5) is not limiter(2, 0.5)
+    assert limiter(1, 0) is None
