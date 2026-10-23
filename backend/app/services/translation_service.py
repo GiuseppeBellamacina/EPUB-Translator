@@ -25,6 +25,7 @@ from typing import Any
 from app.agents.pipeline import TranslationPipeline, TranslationProgress
 from app.agents.reviewer import resolve_doubts
 from app.agents.translator_agent import keep_unfinished, split_paragraphs
+from app.knowledge.compendium import mention_names
 from app.knowledge.glossary import replace_term, same_agreement
 from app.knowledge.matcher import TermMatcher
 from app.services import app_settings
@@ -269,7 +270,7 @@ async def translate_document(
             if e.name in names:
                 reason = f"Compendium corrected: {e.name} is {e.gender}"
                 found = mention_doubts(
-                    [e.name, *e.aliases], done, unit_blocks, quote=e.name, reason=reason
+                    mention_names(e), done, unit_blocks, quote=e.name, reason=reason
                 )
                 events += [flagged(unit, doubts) for unit, doubts in found.items()]
         return events
