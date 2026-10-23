@@ -431,7 +431,9 @@ async def translate_document(
                     resolution = await resolve_doubts(
                         pipeline.review_llm,
                         original_text=source,
-                        translated_text=text,
+                        # the original: given a replaced text, models tend to "confirm" it
+                        # even where the words around the term no longer agree
+                        translated_text=current,
                         doubts=sorted({_line(d) for d in found}),
                         glossary=(
                             pipeline.glossary.relevant(source, around, limits.glossary_limit)
@@ -460,14 +462,21 @@ async def translate_document(
                     )
                     return
             note = resolution.note.strip()
-            if resolution.translation and resolution.translation.strip() != text:
+            answer = None
+            if resolution.translation and resolution.translation.strip() != current:
                 new = keep_unfinished(source, " ".join(split_paragraphs(resolution.translation)))
                 if sorted(_PLACEHOLDER.findall(new)) == sorted(_PLACEHOLDER.findall(source)):
+                    for d in found:  # an occurrence of the old term the model left
+                        if d.get("old_text") and d.get("new_text"):
+                            new = replace_term(new, d["old_text"], d["new_text"])
                     glossary = pipeline.glossary.relevant(source) if f.enforce_glossary else []
-                    text = pipeline.glossary.enforce(new, glossary)
+                    answer = pipeline.glossary.enforce(new, glossary)
                 else:
                     note = "Kept: the correction lost inline markup. " + note
-            fixed = text if text != current else None
+            if answer:
+                fixed = answer
+            elif text != current:  # the model changed nothing: at least the term is replaced
+                fixed, note = text, "Replaced the term only (the model proposed no change)"
         if fixed:
             results[unit][block] = fixed
             touched.add(unit)
