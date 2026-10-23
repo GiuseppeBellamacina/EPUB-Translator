@@ -44,6 +44,11 @@ class CompendiumEntry(BaseModel):
         description="One short sentence of facts that matter for the translation: role, "
         "relations, how they speak or address others, a fixed translation choice",
     )
+    evidence: str = Field(
+        default="",
+        description="Only to correct a gender the COMPENDIUM lists: the few words of THIS "
+        "passage, copied exactly, that prove the right one (e.g. 'she drew her sword')",
+    )
 
 
 class AnalysisResult(BaseModel):

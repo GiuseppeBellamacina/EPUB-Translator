@@ -4,7 +4,7 @@ Edits are allowed while the book translates: the database is the source of truth
 and the live stores holding the book reload, so the running job uses them at once.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,21 @@ from app.jobs import jobs
 from app.models.schemas import CompendiumEntry
 
 router = APIRouter()
+
+
+async def _entry(db: AsyncSession, model, book_id: int, entry_id: int):
+    row = await db.get(model, entry_id)
+    if row is None or row.book_id != book_id:
+        raise HTTPException(404, "Entry not found")
+    return row
+
+
+async def _save(db: AsyncSession, book_id: int, row=None) -> None:
+    """Commit an edit; the live stores holding the book reload, so a running job uses it."""
+    await db.commit()
+    if row is not None:
+        await db.refresh(row)
+    await jobs.knowledge.refresh_book(book_id)
 
 
 # === GLOSSARY ===
@@ -44,10 +59,28 @@ async def add_glossary_entry(
 ):
     new_entry = GlossaryEntry(book_id=book_id, user_edited=True, **entry.model_dump())
     db.add(new_entry)
-    await db.commit()
-    await db.refresh(new_entry)
-    await jobs.knowledge.refresh_book(book_id)
+    await _save(db, book_id, new_entry)
     return new_entry
+
+
+@router.put("/glossary/{book_id}/entry/{entry_id}", response_model=GlossaryEntryResponse)
+async def edit_glossary_entry(
+    book_id: int, entry_id: int, entry: GlossaryEntryCreate, db: AsyncSession = Depends(get_db)
+):
+    """Change one term, also while translating: it becomes the user's."""
+    row = await _entry(db, GlossaryEntry, book_id, entry_id)
+    for key, value in entry.model_dump().items():
+        setattr(row, key, value)
+    row.user_edited = True
+    await _save(db, book_id, row)
+    return row
+
+
+@router.delete("/glossary/{book_id}/entry/{entry_id}")
+async def delete_glossary_entry(book_id: int, entry_id: int, db: AsyncSession = Depends(get_db)):
+    await db.delete(await _entry(db, GlossaryEntry, book_id, entry_id))
+    await _save(db, book_id)
+    return {"status": "deleted"}
 
 
 # === COMPENDIUM ===
@@ -70,18 +103,50 @@ async def get_compendium(book_id: int, db: AsyncSession = Depends(get_db)):
         .where(CompendiumRecord.book_id == book_id)
         .order_by(CompendiumRecord.id)
     )
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "kind": r.kind,
-            "gender": r.gender,
-            "aliases": r.aliases or [],
-            "notes": r.notes,
-            "user_edited": bool(r.user_edited),
-        }
-        for r in rows.scalars()
-    ]
+    return [_compendium_row(r) for r in rows.scalars()]
+
+
+def _compendium_row(r: CompendiumRecord) -> dict:
+    return {
+        "id": r.id,
+        "name": r.name,
+        "kind": r.kind,
+        "gender": r.gender,
+        "aliases": r.aliases or [],
+        "notes": r.notes,
+        "evidence": r.evidence or "",  # set: the translation corrected the gender
+        "user_edited": bool(r.user_edited),
+    }
+
+
+@router.post("/compendium/{book_id}/entry")
+async def add_compendium_entry(
+    book_id: int, entry: CompendiumEntry, db: AsyncSession = Depends(get_db)
+):
+    row = CompendiumRecord(book_id=book_id, user_edited=True, **entry.model_dump())
+    db.add(row)
+    await _save(db, book_id, row)
+    return _compendium_row(row)
+
+
+@router.put("/compendium/{book_id}/entry/{entry_id}")
+async def edit_compendium_entry(
+    book_id: int, entry_id: int, entry: CompendiumEntry, db: AsyncSession = Depends(get_db)
+):
+    """Change one entry, also while translating: it becomes the user's."""
+    row = await _entry(db, CompendiumRecord, book_id, entry_id)
+    for key, value in entry.model_dump().items():
+        setattr(row, key, value)
+    row.user_edited = True
+    await _save(db, book_id, row)
+    return _compendium_row(row)
+
+
+@router.delete("/compendium/{book_id}/entry/{entry_id}")
+async def delete_compendium_entry(book_id: int, entry_id: int, db: AsyncSession = Depends(get_db)):
+    await db.delete(await _entry(db, CompendiumRecord, book_id, entry_id))
+    await _save(db, book_id)
+    return {"status": "deleted"}
 
 
 @router.put("/compendium/{book_id}")

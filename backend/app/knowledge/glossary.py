@@ -52,9 +52,10 @@ class Glossary:
     def __len__(self) -> int:
         return len(self._entries)
 
-    def clear(self) -> None:
-        """Empty in place (the graph keeps its reference), before reloading."""
-        self.__init__()
+    def replace(self, other: "Glossary") -> None:
+        """Take ``other``'s entries in place (the graph keeps its reference), in one step:
+        readers never see a half-loaded glossary."""
+        self.__dict__ = other.__dict__
 
     def add(self, items: list[GlossaryItem], source_text: str | None = None) -> list[GlossaryItem]:
         """Add new entries, returning those accepted.

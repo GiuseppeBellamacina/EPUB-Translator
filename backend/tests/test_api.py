@@ -146,3 +146,27 @@ def test_compendium_api_replaces_entries_and_keeps_the_user_flag(client, sample_
         ("Mara", "female", ["Ma"], True),
         ("Old Tom", "unknown", [], False),
     ]
+
+
+def test_single_entries_are_edited_while_a_live_store_holds_the_book(client, sample_epub):
+    from app.jobs import jobs
+
+    _, book = _upload(client, sample_epub)
+    bid = book["id"]
+    store = client.portal.call(jobs.knowledge.acquire, "compendium", f"book:{bid}", bid, set())
+    added = client.post(f"/api/compendium/{bid}/entry", json={"name": "Ghislaine"}).json()
+    assert store.compendium.entries[0].gender == "unknown"
+    url = f"/api/compendium/{bid}/entry/{added['id']}"
+    edited = client.put(url, json={"name": "Ghislaine", "gender": "female"}).json()
+    assert edited["user_edited"] and store.compendium.entries[0].gender == "female"
+    assert client.delete(f"/api/compendium/{bid + 1}/entry/{added['id']}").status_code == 404
+    assert client.delete(url).status_code == 200 and store.compendium.entries == []
+    jobs.knowledge.release(store)
+
+    term = client.post(
+        f"/api/glossary/{bid}/entry", json={"source_term": "Mara", "target_term": "Mara"}
+    )
+    url = f"/api/glossary/{bid}/entry/{term.json()['id']}"
+    client.put(url, json={"source_term": "Mara", "target_term": "Marta"})
+    assert [g["target_term"] for g in client.get(f"/api/glossary/{bid}").json()] == ["Marta"]
+    assert client.delete(url).json() == {"status": "deleted"}

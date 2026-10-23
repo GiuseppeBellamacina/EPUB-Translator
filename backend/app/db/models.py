@@ -101,6 +101,7 @@ class CompendiumRecord(Base):
     gender = Column(String(10), nullable=False, default="unknown")
     aliases = Column(JSON, nullable=False, default=list)
     notes = Column(Text, nullable=False, default="")
+    evidence = Column(Text, nullable=True)  # set when the translation corrected the gender
     user_edited = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
