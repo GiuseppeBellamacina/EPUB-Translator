@@ -266,6 +266,27 @@ async def _set_item(item_id: int, status: str, error: str | None = None) -> None
         await db.commit()
 
 
+async def reorder(batch_id: int, item_ids: list[int]) -> None:
+    """Put a queue's waiting books (pending/paused) in the given order, even while it runs.
+
+    They take the same set of positions they had, so running and finished books, and
+    other queues, keep their place.
+    """
+    async with async_session() as db:
+        result = await db.execute(
+            select(QueueItem).where(
+                QueueItem.batch_id == batch_id, QueueItem.status.in_(("pending", "paused"))
+            )
+        )
+        waiting = {item.id: item for item in result.scalars()}
+        if sorted(item_ids) != sorted(waiting):
+            raise ValueError("The order must list exactly the queue's waiting books")
+        positions = sorted(item.position for item in waiting.values())
+        for item_id, position in zip(item_ids, positions):
+            waiting[item_id].position = position
+        await db.commit()
+
+
 async def dequeue(book_id: int) -> bool:
     """Remove a book that is waiting (not running) from the queue."""
     async with async_session() as db:

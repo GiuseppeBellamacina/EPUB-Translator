@@ -122,6 +122,9 @@ export const api = {
         keep_compendium: keep.compendium,
       }),
     }),
+  /** New order of a queue's waiting books (running and finished ones stay in place). */
+  reorderBatch: (batchId: number, itemIds: number[]) =>
+    request(`/queue/${batchId}/order`, { method: "PUT", body: JSON.stringify({ item_ids: itemIds }) }),
   /** Add books to the end of an existing queue (its settings, carry-over continues). */
   addToBatch: (batchId: number, bookIds: number[]) =>
     request<{ queued: number }>(`/queue/${batchId}/books`, {

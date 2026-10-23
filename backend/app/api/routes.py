@@ -608,6 +608,20 @@ async def add_to_batch(batch_id: int, data: BatchAdd):
     return {"queued": len(items)}
 
 
+class QueueOrder(BaseModel):
+    item_ids: list[int]
+
+
+@router.put("/queue/{batch_id}/order")
+async def reorder_batch(batch_id: int, data: QueueOrder):
+    """New order of a queue's waiting books (running and finished ones stay in place)."""
+    try:
+        await job_runner.reorder(batch_id, data.item_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "reordered"}
+
+
 @router.post("/queue/start")
 async def start_queue():
     """Resume: paused books run again in their order."""
