@@ -12,7 +12,7 @@ def _get_fernet() -> Fernet:
     key = settings.encryption_key
     if not key:
         # Fallback: use a derived key (not ideal for production but functional)
-        key = "epub-translator-default-key-change-me"
+        key = "translatio-default-key-change-me"
     # Derive a valid Fernet key from arbitrary string
     derived = hashlib.sha256(key.encode()).digest()
     fernet_key = base64.urlsafe_b64encode(derived)

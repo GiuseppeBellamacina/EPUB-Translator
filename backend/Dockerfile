@@ -20,8 +20,8 @@ RUN uvx --from fonttools python /tmp/strip_ligatures.py \
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
     PATH="/opt/venv/bin:$PATH" \
-    EPUB_DATA_DIR=/data \
-    EPUB_CONFIG_FILE=/config/config.yaml
+    TRANSLATIO_DATA_DIR=/data \
+    TRANSLATIO_CONFIG_FILE=/config/config.yaml
 
 COPY pyproject.toml uv.lock* ./
 

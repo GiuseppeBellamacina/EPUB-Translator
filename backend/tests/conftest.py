@@ -7,11 +7,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-os.environ["EPUB_DATA_DIR"] = tempfile.mkdtemp(prefix="epub-tests-")
+os.environ["TRANSLATIO_DATA_DIR"] = tempfile.mkdtemp(prefix="translatio-tests-")
 # Never bootstrap real providers from the developer's .env/config.yaml in tests
-os.environ["EPUB_ENV_FILE"] = "/nonexistent/.env"
-os.environ["EPUB_CONFIG_FILE"] = "/nonexistent/config.yaml"
-os.environ["EPUB_PRICING_URL"] = ""  # offline: bundled price snapshot
+os.environ["TRANSLATIO_ENV_FILE"] = "/nonexistent/.env"
+os.environ["TRANSLATIO_CONFIG_FILE"] = "/nonexistent/config.yaml"
+os.environ["TRANSLATIO_PRICING_URL"] = ""  # offline: bundled price snapshot
 
 import pytest  # noqa: E402
 from langchain_core.runnables import Runnable, RunnableLambda  # noqa: E402

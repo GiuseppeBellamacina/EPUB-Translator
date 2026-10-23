@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="EPUB_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="TRANSLATIO_", extra="ignore")
 
     app_name: str = "Translatio"
     debug: bool = False
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "epub_translator.db"
+        return self.data_dir / "translatio.db"
 
     def ensure_dirs(self) -> None:
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
