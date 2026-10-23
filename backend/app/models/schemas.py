@@ -64,7 +64,8 @@ class AnalysisResult(BaseModel):
     )
     do_not_translate: list[str] = Field(
         default_factory=list,
-        description="Proper nouns, brand names, or terms that must NOT be translated",
+        description="Proper nouns, brand names, or terms that must NOT be translated; names "
+        "without their titles (Ariel, not Princess Ariel: titles are translated)",
     )
     summary: str = Field(description="2-3 sentence summary of the content and themes")
     entities: list[CompendiumEntry] = Field(

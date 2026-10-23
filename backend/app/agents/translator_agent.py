@@ -48,8 +48,9 @@ consistently. Only facts stated or clearly implied by the text; never repeat wha
 When the passage clearly contradicts a listed gender, report the entry with the right gender \
 and, in evidence, the words of the passage that prove it
 11. Report in doubts (at most 3) the places where you had to guess: a gender the text has not \
-revealed yet, who a pronoun refers to, an unknown term, wordplay. They are revisited at the end \
-of the book, when more is known. Never report what you are sure about
+revealed yet, who a pronoun refers to, a first-person line whose speaker you could not identify \
+for sure (its agreements depend on the speaker), an unknown term, wordplay. They are revisited \
+at the end of the book, when more is known. Never report what you are sure about
 
 {style_instructions}""",
         ),

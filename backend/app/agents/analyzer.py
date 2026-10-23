@@ -18,7 +18,9 @@ Analyze the text and produce a structured analysis that will guide translators.
 
 Focus on:
 - Recurring terminology that needs consistent translation (suggest a target term in {target_language})
-- Character names (these should generally NOT be translated)
+- Character names (these should generally NOT be translated). Titles and ranks are translated: \
+list the bare name in do_not_translate (Ariel) and a titled form in the key terms with its \
+translation (Princess Ariel)
 - Technical or domain-specific terms
 - Culturally significant phrases that need careful handling
 - The overall style and tone the translator should maintain

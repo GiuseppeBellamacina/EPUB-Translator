@@ -160,6 +160,9 @@ TEXT BEFORE THE PASSAGE ({source_language}):
 PASSAGE ({source_language}):
 {original_text}
 
+TEXT AFTER THE PASSAGE ({source_language}; who speaks a line is often named here):
+{following}
+
 TRANSLATION ({target_language}):
 {translated_text}
 
@@ -181,6 +184,7 @@ async def resolve_doubts(
     target_language: str,
     style_instructions: str = "",
     previous: str = "",
+    following: str = "",
 ) -> DoubtResolution:
     """End-of-book review of one passage translated with doubts (``"quote: reason"`` lines)."""
     chain = structured_chain(DOUBT_PROMPT, llm, DoubtResolution)
@@ -192,6 +196,7 @@ async def resolve_doubts(
             "glossary": _format_glossary(glossary),
             "compendium": render(compendium),
             "previous": previous or "(Start of chapter)",
+            "following": following or "(End of chapter)",
             "style_instructions": _format_style(style_instructions),
             "source_language": source_language,
             "target_language": target_language,
