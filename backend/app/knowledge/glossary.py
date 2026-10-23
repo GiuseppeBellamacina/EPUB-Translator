@@ -38,8 +38,16 @@ def _match_case(source: str, replacement: str) -> str:
 
 
 def replace_term(text: str, old: str, new: str) -> str:
-    """Every whole-word occurrence of ``old`` in ``text`` becomes ``new`` (casing kept)."""
-    return _word_pattern(old).sub(lambda m: _match_case(m.group(0), new), text)
+    """Every whole-word occurrence of ``old`` in ``text`` becomes ``new`` (casing kept),
+    except inside an occurrence of ``new`` ("faro" → "torre del faro" twice is still one)."""
+    done = [m.span() for m in _word_pattern(new).finditer(text)]
+
+    def swap(m: re.Match) -> str:
+        if any(start <= m.start() < end for start, end in done):
+            return m.group(0)
+        return _match_case(m.group(0), new)
+
+    return _word_pattern(old).sub(swap, text)
 
 
 def same_agreement(old: str, new: str) -> bool:

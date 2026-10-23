@@ -166,3 +166,11 @@ def test_a_replacement_changing_gender_or_number_is_left_to_the_model():
     assert same_agreement("Bambino Benedetto", "Fanciullo Benedetto")
     assert not same_agreement("Bambino Benedetto", "Figlia Benedetta")
     assert not same_agreement("Bambino Benedetto", "Prescelto")
+
+
+def test_replacing_a_term_with_a_longer_one_containing_it_is_idempotent():
+    from app.knowledge.glossary import replace_term
+
+    once = replace_term("Il faro. La torre del faro.", "faro", "torre del faro")
+    assert once == "Il torre del faro. La torre del faro."
+    assert replace_term(once, "faro", "torre del faro") == once

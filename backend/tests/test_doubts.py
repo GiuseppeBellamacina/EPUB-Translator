@@ -158,3 +158,29 @@ async def test_bookmarks_added_during_the_review_are_reviewed_in_the_same_run(ll
     assert len(llm.calls_for(DoubtResolution)) == 2
     assert "Mara: gender male → female" in llm.calls_for(DoubtResolution)[1]
     assert events[-1].event_type == "job_complete"
+
+
+async def test_a_change_of_agreement_goes_to_the_model_with_the_original_text(llm, sample_epub):
+    events = await translate(sample_epub, TranslationPipeline(llm=llm, enable_review=False))
+    previous = {
+        e.chapter_index: e.data["translations"] for e in events if e.event_type == "chapter_saved"
+    }
+    unit = next(u for u, t in previous.items() if any("lighthouse" in x for x in t))
+    block = next(b for b, x in enumerate(previous[unit]) if "lighthouse" in x)
+    change = {"quote": "lighthouse", "reason": "Glossary: lighthouse → faro"}
+    llm.handlers[DoubtResolution] = lambda prompt, n: DoubtResolution(note="Looks right.")
+    again = await translate(
+        sample_epub,
+        TranslationPipeline(llm=llm, enable_review=False),
+        previous=previous,
+        completed=set(previous),
+        analysis={"summary": ""},
+        bookmarks=[
+            {"unit": unit, "block": block, "old_text": "lighthouse", "new_text": "faro", **change}
+        ],
+    )
+    [prompt] = llm.calls_for(DoubtResolution)
+    assert "lighthouse" in prompt.split("TRANSLATION (")[1]  # the original, not a replaced text
+    [resolved] = [e.data for e in again if e.event_type == "doubt_resolved"]
+    assert "faro" in resolved["translation"] and "lighthouse" not in resolved["translation"]
+    assert resolved["note"] == "Replaced the term only (the model proposed no change)"
