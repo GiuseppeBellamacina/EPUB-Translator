@@ -214,8 +214,8 @@ export function TranslatePage() {
           <div className="grid grid-cols-2 gap-3">
             {(
               [
-                ["glossary", "Glossary", `${glossary.length} terms`],
-                ["compendium", "Compendium", `${compendium.length} entries`],
+                ["glossary", "Glossary", `${glossary.length} ${glossary.length === 1 ? "term" : "terms"}`],
+                ["compendium", "Compendium", `${compendium.length} ${compendium.length === 1 ? "entry" : "entries"}`],
               ] as const
             ).map(([key, title, count]) => (
               <div key={key} className="flex flex-col gap-2 rounded-md bg-tint p-3.5">
