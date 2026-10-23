@@ -2,10 +2,13 @@
 
 A job runs independently of any client: WebSocket clients only follow its
 messages (``subscribe``), so closing the page does not pause it. Every start
-goes through the queue (``queue_items`` table), which runs one book at a time:
+goes through the queue (``queue_items`` table). Up to ``max_parallel_books``
+workers (app settings) translate waiting books at the same time; the books of a
+queue that carries glossary or compendium still run one after another, and every
+book on a provider shares that provider's rate limiter.
 
 - ``enqueue(..., front=True)`` is the single-book start of the translate page
-- ``stop`` pauses the current book and halts the queue; ``kick`` resumes it
+- ``stop`` pauses the running book(s) and halts the queue; ``kick`` resumes it
 - a failed book is recorded and the queue moves on
 - on startup the interrupted item becomes ``paused`` and the queue waits for a resume
 """
@@ -18,6 +21,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
 
@@ -27,6 +31,7 @@ from app.core.encryption import decrypt_api_key
 from app.core.llm_factory import LLMConfig, create_llm
 from app.db.database import async_session
 from app.db.models import Book, BookStatus, ProviderConfig, QueueItem
+from app.services import app_settings
 from app.services.chunker import SmartChunker
 from app.services.documents import open_document
 from app.services.job_store import JobStore
@@ -54,7 +59,9 @@ active_jobs: dict[int, TranslationPipeline] = {}
 recent_events: dict[int, deque] = {}
 run_started: dict[int, tuple[float, int]] = {}
 _subscribers: dict[int, set[asyncio.Queue]] = {}
-_runner: asyncio.Task | None = None
+_workers: set[asyncio.Task] = set()  # running queue workers (max_parallel_books)
+_claimed: dict[int, int | None] = {}  # queue item id -> batch id, for items being run
+_limiters: dict[tuple[int, float], InMemoryRateLimiter] = {}  # per provider and pace
 _halt = False
 _halted_at: datetime | None = None  # when the last stop happened
 
@@ -175,15 +182,33 @@ async def enqueue(
 
 
 def kick() -> None:
-    """Run the queue unless it is already running."""
-    global _runner, _halt
+    """Run the queue (also after a stop)."""
+    global _halt
     _halt = False
-    if _runner is None or _runner.done():
-        _runner = asyncio.create_task(_run_queue())  # module reference keeps it alive
+    fill_workers()
+
+
+def fill_workers() -> None:
+    """Start workers up to the number of books to translate at the same time."""
+    while len(_workers) < app_settings.load().max_parallel_books:
+        task = asyncio.create_task(_worker())
+        _workers.add(task)  # the module reference keeps it alive
+        task.add_done_callback(_workers.discard)
 
 
 def queue_running() -> bool:
-    return _runner is not None and not _runner.done()
+    return bool(_workers)
+
+
+def _limiter_for(provider_id: int, rps: float | None) -> InMemoryRateLimiter | None:
+    if not rps:
+        return None
+    key = (provider_id, rps)
+    if key not in _limiters:
+        _limiters[key] = InMemoryRateLimiter(
+            requests_per_second=rps, check_every_n_seconds=0.1, max_bucket_size=1
+        )
+    return _limiters[key]
 
 
 def stop(book_id: int | None = None) -> bool:
@@ -224,13 +249,16 @@ async def _pause_waiting(before: datetime) -> None:
 async def shutdown() -> None:
     """App shutdown: pause the running book so its state is saved."""
     stop()
-    if _runner is not None:
+    if _workers:
         try:
-            await asyncio.wait_for(asyncio.shield(_runner), timeout=20)
+            done = await asyncio.wait_for(
+                asyncio.shield(asyncio.gather(*_workers, return_exceptions=True)), timeout=20
+            )
+            for result in done:
+                if isinstance(result, Exception):  # a crashed worker must not block the shutdown
+                    logger.error("Queue worker failed: %r", result)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
-        except Exception:  # a crashed runner must not block the shutdown
-            logger.exception("Queue runner failed")
 
 
 async def recover_queue() -> None:
@@ -244,15 +272,27 @@ async def recover_queue() -> None:
         await db.commit()
 
 
-async def _next_item() -> QueueItem | None:
+async def _claim_next() -> QueueItem | None:
+    """The first waiting book a worker may start, claimed so no other worker takes it.
+
+    A queue that carries glossary or compendium runs its books one after another
+    (the next one starts from the previous one's); other books run in parallel.
+    """
     async with async_session() as db:
         result = await db.execute(
-            select(QueueItem)
-            .where(QueueItem.status == "pending")
-            .order_by(QueueItem.position)
-            .limit(1)
+            select(QueueItem).where(QueueItem.status == "pending").order_by(QueueItem.position)
         )
-        return result.scalar_one_or_none()
+        items = list(result.scalars())
+    # no await from here on: checking and claiming happen without another worker in between
+    busy = set(_claimed.values())
+    for item in items:
+        if item.id in _claimed:
+            continue
+        if (item.keep_glossary or item.keep_compendium) and item.batch_id in busy:
+            continue
+        _claimed[item.id] = item.batch_id
+        return item
+    return None
 
 
 async def _set_item(item_id: int, status: str, error: str | None = None) -> None:
@@ -316,33 +356,44 @@ async def _previous_book(item: QueueItem) -> int | None:
         )
 
 
-async def _run_queue() -> None:
+async def _worker() -> None:
+    """Translate waiting books one at a time; several workers run books in parallel."""
     global _halted_at
     while True:
         if _halted_at:  # a stop: the books waiting then are paused, newer starts still run
-            await _pause_waiting(_halted_at)
-            _halted_at = None
-        if _halt or not (item := await _next_item()):
+            at, _halted_at = _halted_at, None
+            await _pause_waiting(at)
+        if _halt or len(_workers) > app_settings.load().max_parallel_books:
+            break  # halted, or fewer books in parallel than before
+        if not (item := await _claim_next()):
             break
-        await _set_item(item.id, "running")  # item still holds the config read before
-        previous = await _previous_book(item)
         try:
-            status = await run_job(
-                item.book_id,
-                RunConfig(**item.config),
-                carry_glossary_from=previous if item.keep_glossary else None,
-                carry_compendium_from=previous if item.keep_compendium else None,
-            )
-            error = None
-        except Exception as e:  # could not start (provider gone, unreadable file...)
-            status, error = BookStatus.failed, str(e)
-            publish(item.book_id, {"event": "error", "message": f"Failed to start: {e}"})
-            publish(item.book_id, FINAL)
-        await _set_item(
-            item.id,
-            {BookStatus.completed: "done", BookStatus.paused: "paused"}.get(status, "failed"),
-            error,
+            await _run_item(item)
+        finally:
+            _claimed.pop(item.id, None)
+        fill_workers()  # a finished book may let a waiting one of its queue start
+
+
+async def _run_item(item: QueueItem) -> None:
+    await _set_item(item.id, "running")  # item still holds the config read before
+    previous = await _previous_book(item)
+    try:
+        status = await run_job(
+            item.book_id,
+            RunConfig(**item.config),
+            carry_glossary_from=previous if item.keep_glossary else None,
+            carry_compendium_from=previous if item.keep_compendium else None,
         )
+        error = None
+    except Exception as e:  # could not start (provider gone, unreadable file...)
+        status, error = BookStatus.failed, str(e)
+        publish(item.book_id, {"event": "error", "message": f"Failed to start: {e}"})
+        publish(item.book_id, FINAL)
+    await _set_item(
+        item.id,
+        {BookStatus.completed: "done", BookStatus.paused: "paused"}.get(status, "failed"),
+        error,
+    )
 
 
 # --- one book ------------------------------------------------------------------
@@ -371,11 +422,15 @@ async def run_job(
         base_url=provider.base_url,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
-        requests_per_second=params.get("requests_per_second", settings.requests_per_second),
+        requests_per_second=None,  # the provider's shared limiter, below
         max_retries=params.get("max_retries", settings.llm_max_retries),
         structured_output_method=params.get("structured_output_method"),
     )
     llm = create_llm(llm_config)
+    # one limiter per provider: books translated in parallel share its pace
+    llm.rate_limiter = _limiter_for(
+        provider.id, params.get("requests_per_second", settings.requests_per_second)
+    )
     review_llm = None
     if config.review_model and config.review_model != llm_config.model:
         # Same provider and key; shares the rate limiter so the job keeps its pace

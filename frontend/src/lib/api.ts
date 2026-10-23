@@ -31,6 +31,8 @@ export const api = {
   // Providers
   getProviders: () => request<Provider[]>("/providers"),
   getSettings: () => request<AppSettings>("/settings"),
+  updateSettings: (data: { max_parallel_books: number }) =>
+    request<AppSettings>("/settings", { method: "PUT", body: JSON.stringify(data) }),
   createProvider: (data: ProviderCreate) =>
     request<Provider>("/providers", {
       method: "POST",
@@ -344,6 +346,8 @@ export const QUEUE_PILL: Record<QueueItem["status"], string> = {
 
 /** Translation defaults (a provider's params override them). */
 export interface AppSettings {
+  /** books translated at the same time (a queue that carries glossary/compendium stays in order) */
+  max_parallel_books: number;
   defaults: { requests_per_second: number; max_concurrency: number; max_retries: number };
 }
 

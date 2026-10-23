@@ -42,7 +42,7 @@ from app.db.models import (
     TranslationJob,
 )
 from app.models.schemas import CompendiumEntry
-from app.services import job_runner
+from app.services import app_settings, job_runner
 from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
@@ -577,14 +577,23 @@ async def _queue_items(db: AsyncSession, *where) -> list[dict]:
 
 @router.get("/settings")
 async def get_settings():
-    """The translation defaults a provider's params override."""
+    """App settings, plus the translation defaults a provider's params override."""
     return {
+        **app_settings.load().model_dump(),
         "defaults": {
             "requests_per_second": settings.requests_per_second,
             "max_concurrency": settings.max_concurrency,
             "max_retries": settings.llm_max_retries,
-        }
+        },
     }
+
+
+@router.put("/settings")
+async def update_settings(data: app_settings.AppSettings):
+    app_settings.save(data)
+    if job_runner.queue_running():
+        job_runner.fill_workers()  # more books in parallel start now; fewer as books finish
+    return await get_settings()
 
 
 @router.get("/queue")
