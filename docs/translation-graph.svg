@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 490" width="1180" height="490" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 610" width="1180" height="610" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
   <title id="title">Translatio chapter graph</title>
-  <desc id="desc">LangGraph per-chapter workflow: context, translate, review, learn, finalize, complete. Translate and review call the model; the other nodes are code. Glossary and compendium are shared by every chunk.</desc>
+  <desc id="desc">LangGraph per-chapter workflow: context, translate, review, learn, finalize, complete. Translate and review call the model; the other nodes are code. Glossary and compendium are shared by every chunk. Around it, the whole book: analysis, units (pages grouped), doubt review of the bookmarked passages, save.</desc>
   <style>
     .t { fill: #1b2433; font-size: 15px; font-weight: 600; }
     .s { fill: #5b6474; font-size: 11.5px; }
@@ -71,7 +71,7 @@
 
   <rect class="code" x="620" y="172" width="130" height="56" rx="10"/>
   <text class="t" x="685" y="196" text-anchor="middle">learn</text>
-  <text class="s" x="685" y="214" text-anchor="middle">merge, no duplicates</text>
+  <text class="s" x="685" y="214" text-anchor="middle">merge · note doubts</text>
 
   <rect class="code" x="800" y="172" width="130" height="56" rx="10"/>
   <text class="t" x="865" y="196" text-anchor="middle">finalize</text>
@@ -117,4 +117,22 @@
   <text class="lbl" x="118" y="400" text-anchor="end">read</text>
   <path class="data" d="M685,230 C700,320 720,370 720,406" marker-end="url(#ad)"/>
   <text class="lbl" x="728" y="392">write</text>
+
+  <!-- the whole book -->
+  <text class="lbl" x="20" y="512" font-weight="600">Whole book</text>
+  <rect class="llm" x="80" y="528" width="170" height="56" rx="10"/>
+  <text class="t" x="165" y="552" text-anchor="middle">analysis</text>
+  <text class="s" x="165" y="570" text-anchor="middle">seeds glossary &amp; compendium</text>
+  <rect class="code" x="310" y="528" width="210" height="56" rx="10"/>
+  <text class="t" x="415" y="552" text-anchor="middle">units</text>
+  <text class="s" x="415" y="570" text-anchor="middle">graph above, in parallel; pages grouped</text>
+  <rect class="llm" x="580" y="528" width="210" height="56" rx="10"/>
+  <text class="t" x="685" y="552" text-anchor="middle">doubt review</text>
+  <text class="s" x="685" y="570" text-anchor="middle">bookmarked passages, final knowledge</text>
+  <rect class="code" x="850" y="528" width="170" height="56" rx="10"/>
+  <text class="t" x="935" y="552" text-anchor="middle">save</text>
+  <text class="s" x="935" y="570" text-anchor="middle">same format as the input</text>
+  <path class="edge" d="M250,556 H308" marker-end="url(#a)"/>
+  <path class="edge" d="M520,556 H578" marker-end="url(#a)"/>
+  <path class="edge" d="M790,556 H848" marker-end="url(#a)"/>
 </svg>
