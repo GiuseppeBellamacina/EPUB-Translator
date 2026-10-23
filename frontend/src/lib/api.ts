@@ -119,7 +119,8 @@ export const api = {
   deleteGlossaryEntry: (bookId: number, id: number) =>
     request(`/glossary/${bookId}/entry/${id}`, { method: "DELETE" }),
   saveCompendiumEntry: (bookId: number, entry: CompendiumItem) =>
-    request<CompendiumItem>(`/compendium/${bookId}/entry${entry.id ? `/${entry.id}` : ""}`, {
+    // bookmarked: translated passages naming it, rechecked by the doubt review (gender changed)
+    request<CompendiumItem & { bookmarked?: number }>(`/compendium/${bookId}/entry${entry.id ? `/${entry.id}` : ""}`, {
       method: entry.id ? "PUT" : "POST",
       body: JSON.stringify(entry),
     }),

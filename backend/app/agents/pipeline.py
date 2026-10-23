@@ -484,6 +484,7 @@ class TranslationPipeline:
         self.llm = llm
         self.review_llm = review_llm or llm
         self.doubt_review = doubt_review
+        self.added_bookmarks: list[dict] = []  # from the editor while running (unit, block...)
         self.features = features
         self.source_language = source_language
         self.target_language = target_language

@@ -42,7 +42,8 @@ class CompendiumEntry(BaseModel):
     notes: str = Field(
         default="",
         description="One short sentence of facts that matter for the translation: role, "
-        "relations, how they speak or address others, a fixed translation choice",
+        "relations, how they speak or address others, a fixed translation choice. Written in "
+        "the language of the source text",
     )
     evidence: str = Field(
         default="",

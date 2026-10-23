@@ -144,6 +144,7 @@ export function TranslatePage() {
   const unitAbbr = isPdf ? "p." : "ch.";
   const done = progress?.completed_units ?? book.translated_chapters;
   const isCompleted = book.status === "completed";
+  const openDoubts = bookmarks.filter((b) => b.status === "open").length;
   const canResume = !isCompleted && done > 0;
   const spent =
     typeof totalCost === "number" && book.total_chapters
@@ -197,6 +198,13 @@ export function TranslatePage() {
               {(canResume || isCompleted) && (
                 <Button onClick={() => start(true)} disabled={providerId === null}>
                   <RotateCcw className="h-4 w-4" aria-hidden="true" /> Start over
+                </Button>
+              )}
+              {isCompleted && openDoubts > 0 && (
+                // a completed book only runs its doubt review again, then is saved
+                <Button variant="primary" onClick={() => start(false)} disabled={providerId === null}>
+                  <Play className="h-4 w-4" aria-hidden="true" /> Review {openDoubts}{" "}
+                  {openDoubts === 1 ? "doubt" : "doubts"}
                 </Button>
               )}
               {!isCompleted && (

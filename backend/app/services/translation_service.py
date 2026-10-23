@@ -18,7 +18,7 @@ arrive.
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, Callable, Collection, Coroutine
+from collections.abc import AsyncGenerator, Callable, Collection, Coroutine, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from app.agents.pipeline import TranslationPipeline, TranslationProgress
 from app.agents.reviewer import resolve_doubts
 from app.agents.translator_agent import keep_unfinished, split_paragraphs
 from app.knowledge.matcher import TermMatcher
+from app.models.schemas import CompendiumEntry
 from app.services.chunker import SmartChunker, TextBlock
 from app.services.documents import Document, Translations
 
@@ -88,6 +89,42 @@ def unit_groups(todo: list[int], blocks: dict, chunker: SmartChunker) -> list[li
             groups.append([i])
             size = tokens
     return groups
+
+
+def naming_blocks(
+    entries: list[CompendiumEntry],
+    translated: Translations,
+    blocks_of: Callable[[int], list[TextBlock]],
+    reason: Callable[[CompendiumEntry], str],
+) -> dict[int, list[dict]]:
+    """The translated blocks naming an entry (name or alias), as doubts per unit: after a
+    gender change they may have the old agreements."""
+    matcher = TermMatcher()
+    for i, entry in enumerate(entries):
+        for name in [entry.name, *entry.aliases]:
+            matcher.add(name, i)
+    found: dict[int, list[dict]] = {}
+    for unit, translations in sorted(translated.items()):
+        for b, block in enumerate(blocks_of(unit)):
+            if b < len(translations or []) and translations[b] is not None:
+                for i in matcher.find(block.text):
+                    found.setdefault(unit, []).append(
+                        {
+                            "block": b,
+                            "quote": entries[i].name,
+                            "reason": reason(entries[i]),
+                            "source": block.text,
+                            "translation": translations[b],
+                        }
+                    )
+    return found
+
+
+def doubt_keys(bookmarks: Iterable[dict]) -> dict[tuple[int, int], list[str]]:
+    keys: dict[tuple[int, int], list[str]] = {}
+    for b in bookmarks:
+        keys.setdefault((b["unit"], b["block"]), []).append(f"{b['quote']}: {b['reason']}")
+    return keys
 
 
 async def translate_document(
@@ -164,9 +201,7 @@ async def translate_document(
 
     # what is translated so far, per block: auto-bookmarks go only to translated blocks
     done: Translations = {i: list(t) for i, t in previous.items() if t}
-    doubts: dict[tuple[int, int], list[str]] = {}  # (unit, block) -> "quote: reason"
-    for b in bookmarks or []:
-        doubts.setdefault((b["unit"], b["block"]), []).append(f"{b['quote']}: {b['reason']}")
+    doubts = doubt_keys(bookmarks or [])  # (unit, block) -> "quote: reason"
 
     def locate(group: list[int], block: int) -> tuple[int, int]:
         """(unit, block in it) of a block of a group's concatenated blocks."""
@@ -225,29 +260,10 @@ async def translate_document(
     def corrected_mentions(names: list[str]) -> list[TranslationProgress]:
         """A compendium gender was corrected: bookmark the translated blocks naming it."""
         entries = [e for e in pipeline.compendium.entries if e.name in names]
-        matcher = TermMatcher()
-        for entry in entries:
-            for name in [entry.name, *entry.aliases]:
-                matcher.add(name, entry.name)
-        events = []
-        for unit, translations in sorted(done.items()):
-            found = []
-            for b, block in enumerate(unit_blocks(unit)):
-                if b < len(translations) and translations[b] is not None:
-                    for name in matcher.find(block.text):
-                        entry = next(e for e in entries if e.name == name)
-                        found.append(
-                            {
-                                "block": b,
-                                "quote": name,
-                                "reason": f"Compendium corrected: {name} is {entry.gender}",
-                                "source": block.text,
-                                "translation": translations[b],
-                            }
-                        )
-            if found:
-                events.append(flagged(unit, found))
-        return events
+        found = naming_blocks(
+            entries, done, unit_blocks, lambda e: f"Compendium corrected: {e.name} is {e.gender}"
+        )
+        return [flagged(unit, doubts) for unit, doubts in found.items()]
 
     def saved(i: int, translations: list[str | None]) -> TranslationProgress:
         return TranslationProgress(
@@ -357,7 +373,9 @@ async def translate_document(
     if pipeline._cancelled:
         return
 
-    # Phase 3: doubt review
+    # Phase 3: doubt review (with the bookmarks added from the editor meanwhile)
+    for key, texts in doubt_keys(pipeline.added_bookmarks).items():
+        doubts.setdefault(key, []).extend(texts)
     pending = [
         (unit, block)
         for unit, block in sorted(doubts)
