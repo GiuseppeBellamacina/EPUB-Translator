@@ -56,9 +56,14 @@ export function QueuePanel({ queue, onChange }: { queue: QueueState; onChange: (
               </Link>
               <div className="truncate text-xs text-muted" title={item.error ?? undefined}>
                 {item.error ??
-                  `${item.completed_units}/${item.total_units} · ${item.config.model ?? "default model"}${
-                    item.keep_glossary ? " · keeps glossary" : ""
-                  }`}
+                  [
+                    `${item.completed_units}/${item.total_units}`,
+                    item.config.model ?? "default model",
+                    item.keep_glossary && "keeps glossary",
+                    item.keep_compendium && "keeps compendium",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
               </div>
             </div>
             <StatusPill status={PILL[item.status]} />

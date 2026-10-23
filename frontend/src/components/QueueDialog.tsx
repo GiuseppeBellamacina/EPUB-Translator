@@ -21,6 +21,7 @@ export function QueueDialog({
   const [providers, setProviders] = useState<Provider[]>([]);
   const [settings, setSettings] = useState<RunSettings | null>(null);
   const [keepGlossary, setKeepGlossary] = useState(false);
+  const [keepCompendium, setKeepCompendium] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +40,7 @@ export function QueueDialog({
       await api.addToQueue(
         books.map((b) => b.id),
         toRunConfig(settings),
-        keepGlossary,
+        { glossary: keepGlossary, compendium: keepCompendium },
       );
       onQueued();
       onClose();
@@ -94,6 +95,18 @@ export function QueueDialog({
                 {keepGlossary
                   ? "Each book starts with the terms of the book before it (same series)."
                   : "Each book starts with its own glossary."}
+              </p>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Toggle
+                checked={keepCompendium}
+                onChange={setKeepCompendium}
+                label="Keep the compendium from one book to the next"
+              />
+              <p className="m-0 pl-12 text-xs text-faint">
+                {keepCompendium
+                  ? "Characters, genders and notes carry over to the next book."
+                  : "Each book builds its own compendium."}
               </p>
             </div>
 
