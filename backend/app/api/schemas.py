@@ -16,6 +16,7 @@ class ProviderParams(BaseModel):
     requests_per_second: float | None = Field(None, ge=0)  # 0 = unlimited
     max_concurrency: int | None = Field(None, ge=1, le=16)  # chapters in parallel
     max_retries: int | None = Field(None, ge=0, le=20)
+    chunk_tokens: int | None = Field(None, ge=300, le=3000)  # text per model call
     structured_output_method: Literal["function_calling", "json_mode", "json_schema"] | None = None
 
 

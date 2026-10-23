@@ -127,10 +127,10 @@ def build_chapter_graph(
     glossary, compendium = glossaries.glossary, compendiums.compendium  # read live
 
     def context_node(state: ChapterState) -> dict[str, Any]:
-        text = _previous(state) + "\n" + state.chunks[state.chunk_index].text
+        text, before = state.chunks[state.chunk_index].text, _previous(state)
         return {
-            "glossary_context": glossary.relevant(text),
-            "compendium_context": compendium.relevant(text),
+            "glossary_context": glossary.relevant(text, before),
+            "compendium_context": compendium.relevant(text, before),
         }
 
     async def translate_node(state: ChapterState) -> dict[str, Any]:
@@ -297,7 +297,10 @@ def build_chapter_graph(
         if state.translation_failed:
             updates["failed_chunks"] = state.failed_chunks + [state.chunk_index]
         else:
-            translations = [glossary.enforce(t) for t in state.current_blocks]
+            # only the passage's own terms: others would only risk spurious replacements
+            translations = [
+                glossary.enforce(t, state.glossary_context) for t in state.current_blocks
+            ]
             blocks = list(state.translated_blocks)
             blocks[offset : offset + len(translations)] = translations
             updates["translated_blocks"] = blocks

@@ -11,11 +11,13 @@ near-duplicates included), so the next chunks and the reviewer see it.
 
 import re
 
+from app.knowledge.matcher import TermMatcher
 from app.knowledge.similarity import TermIndex, content_words
 from app.models.schemas import CompendiumEntry
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")
 MAX_NOTES = 300  # characters of notes per entry: prompts stay small
+MAX_RELEVANT = 25  # entries per prompt: the chunk's own mentions first
 
 
 def _key(name: str) -> str:
@@ -32,6 +34,7 @@ class Compendium:
         self._user: set[int] = set()  # entries written by the user: never changed
         self._by_key: dict[str, int] = {}  # content-word key of every name/alias -> entry
         self._names = TermIndex()
+        self._matcher = TermMatcher()  # names and aliases, to find the entries a text names
 
     @property
     def entries(self) -> list[CompendiumEntry]:
@@ -61,6 +64,7 @@ class Compendium:
             return False
         self._by_key[key] = index
         self._names.add(name)
+        self._matcher.add(name, index)
         return True
 
     def merge(
@@ -112,10 +116,12 @@ class Compendium:
                 changed[index] = new
         return list(changed.values())
 
-    def relevant(self, text: str) -> list[CompendiumEntry]:
-        """Entries whose name or an alias occurs in ``text`` (keeps prompts small)."""
-        plain = _PLACEHOLDER.sub("", text)
-        return [e for e in self._entries if any(_mentioned(n, plain) for n in [e.name, *e.aliases])]
+    def relevant(
+        self, text: str, context: str = "", limit: int = MAX_RELEVANT
+    ) -> list[CompendiumEntry]:
+        """Entries named in ``text`` (name or alias), then those only in ``context``
+        (the text before it), at most ``limit``: prompts stay small."""
+        return [self._entries[i] for i in self._matcher.rank(text, context, limit)]
 
 
 def render(entries: list[CompendiumEntry]) -> str:

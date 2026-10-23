@@ -17,7 +17,7 @@ from app.db.models import Book, BookStatus, ProviderConfig
 from app.jobs.events import FINAL, EventBus, client_message
 from app.jobs.models import RunConfig
 from app.knowledge.store import KnowledgeRegistry
-from app.services.chunker import SmartChunker
+from app.services.chunker import make_chunker
 from app.services.documents import open_document
 from app.services.job_store import JobStore
 from app.services.translation_service import translate_document
@@ -114,7 +114,7 @@ class JobRunner:
                 llm=llm,
                 source_language=config.source_language or book.source_language or "english",
                 target_language=config.target_language or book.target_language or "italian",
-                chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
+                chunker=make_chunker(params.get("chunk_tokens", settings.chunk_tokens)),
                 max_retries=1,
                 style_instructions=config.style_instructions,
                 enable_review=config.enable_review,

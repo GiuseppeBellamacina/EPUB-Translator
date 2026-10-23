@@ -139,3 +139,29 @@ def test_pdf_upload_translate_download(db, sample_pdf):
         download = client.get(f"/api/books/{book['id']}/download")
         assert download.headers["content-type"] == "application/pdf"
         assert download.content.startswith(b"%PDF")
+
+
+async def test_short_pages_are_translated_together_and_saved_per_page(llm, tmp_path):
+    doc = pymupdf.open()
+    lines = ["The keeper climbed the stairs", "and lit the lamp before", "the storm came."]
+    for line in lines:  # one sentence across three short pages
+        doc.new_page().insert_htmlbox(pymupdf.Rect(72, 72, 520, 140), f"<p>{line}</p>")
+    path = tmp_path / "pages.pdf"
+    doc.save(path)
+
+    llm.handlers[TranslationResult] = upper
+    events = await translate(path, TranslationPipeline(llm=llm, enable_review=False))
+
+    assert len(llm.calls_for(TranslationResult)) == 1  # one call for the three pages
+    checkpoints = [e for e in events if e.event_type == "chunk_done"]
+    assert [(e.chapter_index, e.data["offset"], e.data["total_blocks"]) for e in checkpoints] == [
+        (0, 0, 1),
+        (1, 0, 1),
+        (2, 0, 1),
+    ]
+    saved = {
+        e.chapter_index: e.data["translations"] for e in events if e.event_type == "chapter_saved"
+    }
+    assert saved == {i: [line.upper()] for i, line in enumerate(lines)}
+    out = pymupdf.open(events[-1].data["output_path"])
+    assert [" ".join(page.get_text().split()) for page in out] == [line.upper() for line in lines]

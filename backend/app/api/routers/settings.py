@@ -21,6 +21,7 @@ async def get_settings():
             "requests_per_second": settings.requests_per_second,
             "max_concurrency": settings.max_concurrency,
             "max_retries": settings.llm_max_retries,
+            "chunk_tokens": settings.chunk_tokens,
         },
     }
 

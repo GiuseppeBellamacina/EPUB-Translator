@@ -59,6 +59,26 @@ def trail_context_for(doc: Document, index: int, chunker: SmartChunker) -> str:
     return head[0].text if head else ""
 
 
+def unit_groups(todo: list[int], blocks: dict, chunker: SmartChunker) -> list[list[int]]:
+    """Consecutive units translated together, up to the chunker's target size.
+
+    PDF pages hold ~350 tokens: one call per page would spend as many tokens on the
+    fixed instructions as on the text, and cut sentences at every page end. Grouped,
+    a sentence crossing pages stays in one chunk; results are split back per unit.
+    """
+    groups: list[list[int]] = []
+    size = 0
+    for i in todo:
+        tokens = sum(chunker.count_tokens(b.text) for b in blocks[i])
+        if groups and groups[-1][-1] == i - 1 and size + tokens <= chunker.target_tokens:
+            groups[-1].append(i)
+            size += tokens
+        else:
+            groups.append([i])
+            size = tokens
+    return groups
+
+
 async def translate_document(
     doc: Document,
     pipeline: TranslationPipeline,
@@ -116,55 +136,99 @@ async def translate_document(
 
     queue: asyncio.Queue[TranslationProgress | None] = asyncio.Queue()
     semaphore = asyncio.Semaphore(max(1, max_concurrency))
+    chunker = pipeline.chunker
+    blocks = {i: doc.blocks(i, chunker) for i in range(total) if i not in completed}
 
-    async def run(i: int) -> None:
+    def unit_checkpoint(i: int) -> list[str | None]:
+        saved = previous.get(i)
+        return list(saved) if saved and len(saved) == len(blocks[i]) else [None] * len(blocks[i])
+
+    def per_unit(group: list[int], values: list) -> dict[int, list]:
+        """Split a group's per-block list back into its units."""
+        out, at = {}, 0
+        for i in group:
+            out[i] = values[at : at + len(blocks[i])]
+            at += len(blocks[i])
+        return out
+
+    def split_checkpoint(group: list[int], event: TranslationProgress):
+        """A chunk's checkpoint, per unit it covers (a chunk may span two pages)."""
+        data, at = event.data, 0
+        start, translations = data["offset"], data["translations"]
+        end = start + (len(translations) if translations is not None else 0)
+        for i in group:
+            lo, hi = max(start, at), min(end, at + len(blocks[i]))
+            if lo < hi or (translations is None and at <= start < at + len(blocks[i])):
+                yield TranslationProgress(
+                    event_type="chunk_done",
+                    chapter_index=i,
+                    total_chapters=total,
+                    chunk_index=event.chunk_index,
+                    total_chunks=event.total_chunks,
+                    data={
+                        "offset": lo - at,
+                        "translations": (
+                            None if translations is None else translations[lo - start : hi - start]
+                        ),
+                        "total_blocks": len(blocks[i]),
+                    },
+                )
+            at += len(blocks[i])
+
+    async def run(group: list[int]) -> None:
+        first, last = group[0], group[-1]
         async with semaphore:
             if pipeline._cancelled:
                 return
             try:
-                translations: list[str | None] | None = None
-                failed: list[int] = []
+                translated: list[str | None] | None = None
+                group_previous = [t for i in group for t in unit_checkpoint(i)]
                 async for event in pipeline.translate_chapter(
-                    doc.blocks(i, pipeline.chunker),
-                    i,
+                    [b for i in group for b in blocks[i]],
+                    first,
                     total,
-                    previous.get(i),
-                    lead_context=lead_context_for(doc, i, pipeline.chunker),
-                    trail_context=trail_context_for(doc, i, pipeline.chunker),
+                    group_previous if any(t is not None for t in group_previous) else None,
+                    lead_context=lead_context_for(doc, first, chunker),
+                    trail_context=trail_context_for(doc, last, chunker),
                 ):
                     if event.event_type == "chapter_done":
-                        translations = event.data["translated_blocks"]
-                        failed = event.data["failed_chunks"]
+                        translated = event.data["translated_blocks"]
+                    elif event.event_type == "chunk_done":
+                        for part in split_checkpoint(group, event):
+                            await queue.put(part)
+                        continue
                     await queue.put(event)
-                if pipeline._cancelled:
+                if pipeline._cancelled or translated is None:
                     return
-                results[i] = translations
-                await queue.put(
-                    TranslationProgress(
-                        event_type="chapter_saved",
-                        chapter_index=i,
-                        total_chapters=total,
-                        message=f"Chapter {i + 1} saved",
-                        data={
-                            "item_id": units[i].item_id,
-                            "order_index": i,
-                            "translations": translations,
-                            "failed_chunks": failed,
-                            "translated_html": doc.render(i, translations),
-                        },
+                for i, translations in per_unit(group, translated).items():
+                    results[i] = translations
+                    await queue.put(
+                        TranslationProgress(
+                            event_type="chapter_saved",
+                            chapter_index=i,
+                            total_chapters=total,
+                            message=f"Chapter {i + 1} saved",
+                            data={
+                                "item_id": units[i].item_id,
+                                "order_index": i,
+                                "translations": translations,
+                                "failed_chunks": [0] if None in translations else [],
+                                "translated_html": doc.render(i, translations),
+                            },
+                        )
                     )
-                )
             except Exception as e:
                 await queue.put(
                     TranslationProgress(
                         event_type="error",
-                        chapter_index=i,
+                        chapter_index=first,
                         total_chapters=total,
-                        message=f"Chapter {i + 1} failed: {e}",
+                        message=f"Chapter {first + 1} failed: {e}",
                     )
                 )
 
-    tasks = [asyncio.create_task(run(i)) for i in range(total) if i not in completed]
+    groups = unit_groups([i for i in range(total) if i not in completed], blocks, chunker)
+    tasks = [asyncio.create_task(run(group)) for group in groups]
 
     async def close_when_done() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)

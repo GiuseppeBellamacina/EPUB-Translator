@@ -21,12 +21,12 @@ async def test_failed_chunk_is_not_stored_as_translated(llm, sample_epub, monkey
     llm.fail[TranslationResult] = [RuntimeError("boom")] * 2
     events = await translate(sample_epub, TranslationPipeline(llm=llm, enable_review=False))
 
-    done = [e for e in events if e.event_type == "chapter_done" and e.data["translated_blocks"]]
-    failed = [e for e in done if e.data["failed_chunks"]]
-    assert len(failed) == 1 and failed[0].data["failed_chunks"] == [0]
-    assert all(t is None for t in failed[0].data["translated_blocks"])
-    assert all(t is not None for e in done if e not in failed for t in e.data["translated_blocks"])
-    assert events[-1].data["failed_units"] == [failed[0].chapter_index]
+    # what is stored, per unit: the failed chunk's blocks stay None, nothing else does
+    saved = [e for e in events if e.event_type == "chapter_saved"]
+    failed = [e for e in saved if e.data["failed_chunks"]]
+    assert failed and all(None in e.data["translations"] for e in failed)
+    assert all(None not in e.data["translations"] for e in saved if e not in failed)
+    assert events[-1].data["failed_units"] == [e.chapter_index for e in failed]
 
 
 async def test_rejected_review_triggers_one_retry(llm, sample_epub):

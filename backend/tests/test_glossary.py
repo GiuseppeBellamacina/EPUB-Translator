@@ -33,6 +33,17 @@ def test_relevant_selects_terms_present_in_text():
     ]
 
 
+def test_relevant_folds_plurals_ranks_the_chunk_first_and_is_capped():
+    g = Glossary([item("Superd"), item("Ruijerd"), item("lighthouse", "faro")])
+    found = g.relevant("The Superds' village.", "Ruijerd's spear. The lighthouse.", limit=2)
+    assert [e.source_term for e in found] == ["Superd", "Ruijerd"]
+
+
+def test_enforce_can_be_limited_to_the_passage_terms():
+    g = Glossary([item("lighthouse", "faro"), item("letter", "lettera")])
+    assert g.enforce("the lighthouse, the letter", [g.entries[0]]) == "the faro, the letter"
+
+
 def test_enforce_replaces_untranslated_terms_with_case_and_skips_unsafe_ones():
     g = Glossary(
         [

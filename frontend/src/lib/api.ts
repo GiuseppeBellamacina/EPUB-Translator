@@ -346,9 +346,14 @@ export const QUEUE_PILL: Record<QueueItem["status"], string> = {
 
 /** Translation defaults (a provider's params override them). */
 export interface AppSettings {
-  /** books translated at the same time (a queue that carries glossary/compendium stays in order) */
+  /** books translated at the same time */
   max_parallel_books: number;
-  defaults: { requests_per_second: number; max_concurrency: number; max_retries: number };
+  defaults: {
+    requests_per_second: number;
+    max_concurrency: number;
+    max_retries: number;
+    chunk_tokens: number;
+  };
 }
 
 /** Provider params the UI edits; other keys in Provider.params are kept as they are. */
@@ -356,5 +361,6 @@ export const PROVIDER_PARAMS = [
   { key: "requests_per_second", label: "Requests per second", hint: "0 = no limit", step: "0.05" },
   { key: "max_concurrency", label: "Chapters in parallel", hint: "per book", step: "1" },
   { key: "max_retries", label: "Retries on errors", hint: "429 / 5xx, with backoff", step: "1" },
+  { key: "chunk_tokens", label: "Text per call (tokens)", hint: "300–3000; more = fewer calls", step: "100" },
 ] as const;
 export const OUTPUT_METHODS = ["", "function_calling", "json_mode", "json_schema"] as const;

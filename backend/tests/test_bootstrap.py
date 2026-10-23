@@ -157,6 +157,8 @@ def test_provider_params_are_validated_and_stored(db):
     with TestClient(app) as client:
         bad = {"name": "p", "provider_type": "fake", "params": {"max_concurrency": 0}}
         assert client.post("/api/providers", json=bad).status_code == 422
+        bad["params"] = {"chunk_tokens": 100}  # below the minimum
+        assert client.post("/api/providers", json=bad).status_code == 422
         created = client.post(
             "/api/providers",
             json={"name": "p", "provider_type": "fake", "params": {"requests_per_second": 1}},
