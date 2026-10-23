@@ -89,6 +89,22 @@ class GlossaryEntry(Base):
     book = relationship("Book", back_populates="glossary_entries")
 
 
+class CompendiumRecord(Base):
+    """A compendium entry of a book (see agents/compendium.py)."""
+
+    __tablename__ = "compendium_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    book_id = Column(Integer, ForeignKey("books.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    kind = Column(String(20), nullable=False, default="character")
+    gender = Column(String(10), nullable=False, default="unknown")
+    aliases = Column(JSON, nullable=False, default=list)
+    notes = Column(Text, nullable=False, default="")
+    user_edited = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TranslationJob(Base):
     __tablename__ = "translation_jobs"
 
@@ -117,6 +133,7 @@ class QueueItem(Base):
     config = Column(JSON, nullable=False)  # run settings, see job_runner.RunConfig
     # start from the glossary of the book translated just before it in the queue
     keep_glossary = Column(Boolean, default=False)
+    keep_compendium = Column(Boolean, default=False)  # same, for the compendium
     status = Column(String(20), default="pending")  # pending, running, paused, done, failed
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

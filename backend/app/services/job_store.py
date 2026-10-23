@@ -4,8 +4,9 @@ Job Store — persists translation progress so any interrupted job can resume.
 Every checkpoint event is written as soon as it arrives (one short session per
 event, events are handled sequentially by the single job consumer):
 
-- ``analysis_complete`` → ``Book.analysis`` + glossary
+- ``analysis_complete`` → ``Book.analysis`` + glossary + compendium
 - ``glossary_update``   → new glossary entries
+- ``compendium_update`` → compendium entries (new or grown), upserted by name
 - ``chunk_done``        → ``Chapter.block_translations`` slice
 - ``chapter_saved``     → full block translations, translated HTML, chapter status
 """
@@ -15,6 +16,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select, update
 
+from app.agents.compendium import Compendium
 from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationProgress
 from app.db.database import async_session
@@ -23,10 +25,11 @@ from app.db.models import (
     BookStatus,
     Chapter,
     ChapterStatus,
+    CompendiumRecord,
     GlossaryEntry,
     TranslationJob,
 )
-from app.models.schemas import GlossaryItem
+from app.models.schemas import CompendiumEntry, GlossaryItem
 from app.services.documents import Translations, Unit
 
 
@@ -36,6 +39,8 @@ class ResumeState:
     completed: set[int] = field(default_factory=set)
     analysis: dict | None = None
     glossary: list[GlossaryItem] = field(default_factory=list)
+    compendium_user: list[CompendiumEntry] = field(default_factory=list)  # never changed
+    compendium_learned: list[CompendiumEntry] = field(default_factory=list)
 
 
 async def recover_interrupted_jobs() -> None:
@@ -62,8 +67,8 @@ class JobStore:
     async def prepare(self, units: list[Unit], restart: bool = False) -> ResumeState:
         """Ensure a Chapter row per unit and load the resume checkpoint.
 
-        ``restart`` discards all progress and auto-generated glossary entries
-        (user-edited entries are kept).
+        ``restart`` discards all progress and auto-generated glossary and compendium
+        entries (user-edited entries are kept).
         """
         async with async_session() as db:
             book = await db.get(Book, self.book_id)
@@ -83,7 +88,7 @@ class JobStore:
                 book.analysis = None
                 book.translated_chapters = 0
                 book.translated_path = None
-                for entry in await self._glossary_rows(db):
+                for entry in [*await self._glossary_rows(db), *await self._compendium_rows(db)]:
                     if not entry.user_edited:
                         await db.delete(entry)
 
@@ -99,6 +104,9 @@ class JobStore:
             await db.commit()
 
             state = ResumeState(analysis=book.analysis, glossary=glossary.entries)
+            for row in await self._compendium_rows(db):
+                target = state.compendium_user if row.user_edited else state.compendium_learned
+                target.append(_entry(row))
             for i, chapter in chapters.items():
                 if chapter.block_translations is not None:
                     state.previous[i] = chapter.block_translations
@@ -136,6 +144,27 @@ class JobStore:
             await db.commit()
         return added
 
+    async def import_compendium(self, from_book_id: int) -> list[CompendiumEntry]:
+        """Copy another book's compendium; entities this book already has are kept."""
+        async with async_session() as db:
+            compendium = Compendium()
+            compendium.merge([_entry(r) for r in await self._compendium_rows(db)], user=True)
+            result = await db.execute(
+                select(CompendiumRecord).where(CompendiumRecord.book_id == from_book_id)
+            )
+            added = []
+            for row in result.scalars():
+                # merge as user entries: a known entity matches and is left unchanged
+                if not compendium.knows(_entry(row)):
+                    compendium.merge([_entry(row)], user=True)
+                    added.append(_entry(row))
+            for entry in added:
+                db.add(
+                    CompendiumRecord(book_id=self.book_id, user_edited=True, **entry.model_dump())
+                )
+            await db.commit()
+        return added
+
     async def handle(self, event: TranslationProgress) -> None:
         match event.event_type:
             case "analysis_complete":
@@ -143,10 +172,15 @@ class JobStore:
                     book = await db.get(Book, self.book_id)
                     book.analysis = event.data["analysis"]
                     await self._save_glossary(db, event.data.get("glossary", []))
+                    await self._save_compendium(db, event.data.get("compendium", []))
                     await db.commit()
             case "glossary_update":
                 async with async_session() as db:
                     await self._save_glossary(db, event.data["new_terms"])
+                    await db.commit()
+            case "compendium_update":
+                async with async_session() as db:
+                    await self._save_compendium(db, event.data["entries"])
                     await db.commit()
             case "chunk_done":
                 await self._save_chunk(event)
@@ -186,6 +220,28 @@ class JobStore:
             select(GlossaryEntry).where(GlossaryEntry.book_id == self.book_id)
         )
         return list(result.scalars().all())
+
+    async def _compendium_rows(self, db) -> list[CompendiumRecord]:
+        result = await db.execute(
+            select(CompendiumRecord)
+            .where(CompendiumRecord.book_id == self.book_id)
+            .order_by(CompendiumRecord.id)
+        )
+        return list(result.scalars().all())
+
+    async def _save_compendium(self, db, entries: list[dict]) -> None:
+        """Upsert entries by name (they carry their full state); user rows are left alone."""
+        rows = {r.name.lower(): r for r in await self._compendium_rows(db)}
+        for data in entries:
+            entry = CompendiumEntry(**data)
+            row = rows.get(entry.name.lower())
+            if row is None:
+                row = rows[entry.name.lower()] = CompendiumRecord(book_id=self.book_id)
+                db.add(row)
+            elif row.user_edited:
+                continue
+            for key, value in entry.model_dump().items():
+                setattr(row, key, value)
 
     async def _save_glossary(self, db, entries: list[dict]) -> None:
         existing = {e.source_term.lower() for e in await self._glossary_rows(db)}
@@ -247,4 +303,10 @@ def _item(row: GlossaryEntry) -> GlossaryItem:
         target_term=row.target_term,
         context=row.context,
         do_not_translate=row.do_not_translate,
+    )
+
+
+def _entry(row: CompendiumRecord) -> CompendiumEntry:
+    return CompendiumEntry(
+        name=row.name, kind=row.kind, gender=row.gender, aliases=row.aliases or [], notes=row.notes
     )

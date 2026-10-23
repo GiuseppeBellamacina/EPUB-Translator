@@ -5,8 +5,9 @@ Reviewer Agent — Validates translation quality, consistency, and glossary adhe
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.compendium import render
 from app.core.llm_factory import structured_chain
-from app.models.schemas import GlossaryItem, ReviewResult
+from app.models.schemas import CompendiumEntry, GlossaryItem, ReviewResult
 
 REVIEW_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -25,9 +26,12 @@ Check for:
 - Unnatural phrasing or awkward constructions
 - Missing content or added content not in the original
 - Inconsistent terminology within the chunk
+- Characters given a gender that contradicts the COMPENDIUM (articles, adjectives, participles,
+  pronouns): who "he"/"she"/"they" refers to may be named in the PREVIOUS CONTEXT
 
 Classify every issue: "major" for real errors (meaning changed, content omitted or added,
-glossary not followed, text left untranslated, inline placeholders like <1>...</1> lost),
+glossary not followed, a character's gender against the compendium, text left untranslated,
+inline placeholders like <1>...</1> lost),
 "minor" for style or word-choice preferences. Never report something you consider
 acceptable or correct. A translation with only minor issues is accepted as it is.
 The text may end mid-sentence (it continues on the next page): that is not an issue.
@@ -38,6 +42,12 @@ The text may end mid-sentence (it continues on the next page): that is not an is
             "human",
             """GLOSSARY:
 {glossary}
+
+COMPENDIUM:
+{compendium}
+
+PREVIOUS CONTEXT (already translated, not to review):
+{previous}
 
 ORIGINAL TEXT ({source_language}):
 {original_text}
@@ -83,6 +93,8 @@ async def review_translation(
     source_language: str,
     target_language: str,
     style_instructions: str = "",
+    compendium: list[CompendiumEntry] | None = None,
+    previous: str = "",
 ) -> ReviewResult:
     """
     Review a translation for quality and glossary adherence.
@@ -95,6 +107,8 @@ async def review_translation(
         source_language: Source language
         target_language: Target language
         style_instructions: Optional free-form user instructions on tone/register/style
+        compendium: Compendium entries the text (or the text before it) names
+        previous: Source text right before the reviewed one, to resolve pronouns
 
     Returns:
         ReviewResult with approval status, issues, and optional correction
@@ -106,6 +120,8 @@ async def review_translation(
             "original_text": original_text,
             "translated_text": translated_text,
             "glossary": _format_glossary(glossary),
+            "compendium": render(compendium or []),
+            "previous": previous or "(Start of chapter)",
             "style_instructions": _format_style(style_instructions),
             "source_language": source_language,
             "target_language": target_language,

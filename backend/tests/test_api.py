@@ -134,3 +134,17 @@ def test_delete_book_removes_rows_and_files(client, sample_epub):
         for table in ("chapters", "translation_jobs", "queue_items"):
             assert conn.execute(f"select count(*) from {table}").fetchone() == (0,)
     assert client.delete(f"/api/books/{book['id']}").status_code == 404
+
+
+def test_compendium_api_replaces_entries_and_keeps_the_user_flag(client, sample_epub):
+    _, book = _upload(client, sample_epub)
+    entries = [
+        {"name": "Mara", "gender": "female", "aliases": ["Ma"], "notes": "Keeper."},
+        {"name": "Old Tom", "kind": "character", "user_edited": False},
+    ]
+    assert client.put(f"/api/compendium/{book['id']}", json={"entries": entries}).status_code == 200
+    got = client.get(f"/api/compendium/{book['id']}").json()
+    assert [(e["name"], e["gender"], e["aliases"], e["user_edited"]) for e in got] == [
+        ("Mara", "female", ["Ma"], True),
+        ("Old Tom", "unknown", [], False),
+    ]

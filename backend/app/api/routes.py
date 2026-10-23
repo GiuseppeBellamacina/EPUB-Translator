@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,11 +35,13 @@ from app.db.models import (
     BookStatus,
     Chapter,
     ChapterStatus,
+    CompendiumRecord,
     GlossaryEntry,
     ProviderConfig,
     QueueItem,
     TranslationJob,
 )
+from app.models.schemas import CompendiumEntry
 from app.services import job_runner
 from app.services.chunker import SmartChunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
@@ -213,7 +216,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Book not found")
     if book_id in active_jobs:
         raise HTTPException(409, "Pause the translation before deleting the book")
-    for model in (Chapter, GlossaryEntry, TranslationJob, QueueItem):  # no ORM cascade in async
+    for model in (Chapter, GlossaryEntry, CompendiumRecord, TranslationJob, QueueItem):
         await db.execute(delete(model).where(model.book_id == book_id))
     files = [Path(p) for p in (book.original_path, book.translated_path) if p]
     await db.execute(delete(Book).where(Book.id == book_id))
@@ -454,6 +457,54 @@ async def update_glossary(book_id: int, data: GlossaryUpdate, db: AsyncSession =
     return {"status": "updated", "count": len(data.entries)}
 
 
+# === COMPENDIUM ===
+
+
+class CompendiumItem(CompendiumEntry):
+    # the editor sends True for the entries the user changed: those are never touched by
+    # the translation again; untouched learned entries keep growing
+    user_edited: bool = True
+
+
+class CompendiumUpdate(BaseModel):
+    entries: list[CompendiumItem]
+
+
+@router.get("/compendium/{book_id}")
+async def get_compendium(book_id: int, db: AsyncSession = Depends(get_db)):
+    rows = await db.execute(
+        select(CompendiumRecord)
+        .where(CompendiumRecord.book_id == book_id)
+        .order_by(CompendiumRecord.id)
+    )
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "kind": r.kind,
+            "gender": r.gender,
+            "aliases": r.aliases or [],
+            "notes": r.notes,
+            "user_edited": bool(r.user_edited),
+        }
+        for r in rows.scalars()
+    ]
+
+
+@router.put("/compendium/{book_id}")
+async def update_compendium(
+    book_id: int, data: CompendiumUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Replace the book's compendium with the edited list."""
+    if book_id in active_jobs:
+        raise HTTPException(409, "Pause the translation before editing the compendium")
+    await db.execute(delete(CompendiumRecord).where(CompendiumRecord.book_id == book_id))
+    for entry in data.entries:
+        db.add(CompendiumRecord(book_id=book_id, **entry.model_dump()))
+    await db.commit()
+    return {"status": "updated", "count": len(data.entries)}
+
+
 @router.post("/glossary/{book_id}/entry", response_model=GlossaryEntryResponse)
 async def add_glossary_entry(
     book_id: int,
@@ -480,6 +531,7 @@ async def add_glossary_entry(
 class QueueAdd(RunConfig):
     book_ids: list[int]
     keep_glossary: bool = False
+    keep_compendium: bool = False
 
 
 @router.get("/queue")
@@ -500,6 +552,7 @@ async def get_queue(db: AsyncSession = Depends(get_db)):
                 "status": item.status,
                 "error": item.error,
                 "keep_glossary": item.keep_glossary,
+                "keep_compendium": bool(item.keep_compendium),
                 "config": item.config,
                 "completed_units": book.translated_chapters or 0,
                 "total_units": book.total_chapters,
@@ -512,9 +565,11 @@ async def get_queue(db: AsyncSession = Depends(get_db)):
 @router.post("/queue")
 async def add_to_queue(data: QueueAdd):
     """Append books (in the given order) and run the queue."""
-    config = RunConfig(**data.model_dump(exclude={"book_ids", "keep_glossary"}))
+    config = RunConfig(**data.model_dump(exclude={"book_ids", "keep_glossary", "keep_compendium"}))
     try:
-        items = await job_runner.enqueue(data.book_ids, config, data.keep_glossary)
+        items = await job_runner.enqueue(
+            data.book_ids, config, data.keep_glossary, keep_compendium=data.keep_compendium
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"queued": len(items)}
