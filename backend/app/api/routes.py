@@ -1,4 +1,4 @@
-"""REST API routes for EPUB Translator."""
+"""REST API routes for Translatio."""
 
 import asyncio
 import shutil
