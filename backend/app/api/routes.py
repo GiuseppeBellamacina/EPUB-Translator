@@ -575,6 +575,18 @@ async def _queue_items(db: AsyncSession, *where) -> list[dict]:
     ]
 
 
+@router.get("/settings")
+async def get_settings():
+    """The translation defaults a provider's params override."""
+    return {
+        "defaults": {
+            "requests_per_second": settings.requests_per_second,
+            "max_concurrency": settings.max_concurrency,
+            "max_retries": settings.llm_max_retries,
+        }
+    }
+
+
 @router.get("/queue")
 async def get_queue(db: AsyncSession = Depends(get_db)):
     """Queued books in order, with their status and progress."""

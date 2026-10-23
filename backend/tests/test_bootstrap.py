@@ -147,3 +147,20 @@ async def test_openrouter_custom_rows_become_their_own_type(db, tmp_path, monkey
     assert (row.provider_type, row.base_url) == ("openrouter", None)
     llm = create_llm(LLMConfig(provider="openrouter", model="x/y:free", api_key="k"))
     assert str(llm.openai_api_base) == "https://openrouter.ai/api/v1"
+
+
+def test_provider_params_are_validated_and_stored(db):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        bad = {"name": "p", "provider_type": "fake", "params": {"max_concurrency": 0}}
+        assert client.post("/api/providers", json=bad).status_code == 422
+        created = client.post(
+            "/api/providers",
+            json={"name": "p", "provider_type": "fake", "params": {"requests_per_second": 1}},
+        ).json()
+        params = {"max_concurrency": 4, "max_retries": 2, "structured_output_method": "json_mode"}
+        updated = client.put(f"/api/providers/{created['id']}", json={"params": params}).json()
+        assert updated["params"] == params  # replaced as a whole; unset fields dropped

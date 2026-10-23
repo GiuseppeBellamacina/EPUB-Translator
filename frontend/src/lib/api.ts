@@ -30,6 +30,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Providers
   getProviders: () => request<Provider[]>("/providers"),
+  getSettings: () => request<AppSettings>("/settings"),
   createProvider: (data: ProviderCreate) =>
     request<Provider>("/providers", {
       method: "POST",
@@ -340,3 +341,16 @@ export const QUEUE_PILL: Record<QueueItem["status"], string> = {
   done: "completed",
   failed: "failed",
 };
+
+/** Translation defaults (a provider's params override them). */
+export interface AppSettings {
+  defaults: { requests_per_second: number; max_concurrency: number; max_retries: number };
+}
+
+/** Provider params the UI edits; other keys in Provider.params are kept as they are. */
+export const PROVIDER_PARAMS = [
+  { key: "requests_per_second", label: "Requests per second", hint: "0 = no limit", step: "0.05" },
+  { key: "max_concurrency", label: "Chapters in parallel", hint: "per book", step: "1" },
+  { key: "max_retries", label: "Retries on errors", hint: "429 / 5xx, with backoff", step: "1" },
+] as const;
+export const OUTPUT_METHODS = ["", "function_calling", "json_mode", "json_schema"] as const;
