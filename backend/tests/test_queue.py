@@ -178,3 +178,54 @@ def test_keep_glossary_never_carries_from_an_earlier_batch(client, sample_epub):
     _wait(client, lambda q: not q["running"] and all(i["status"] == "done" for i in q["items"]))
     assert "Moon" not in _terms(client, first)
     assert {"Sun"} <= _terms(client, second) and "Moon" not in _terms(client, second)
+
+
+def test_books_added_to_a_running_queue_carry_its_glossary_and_compendium(
+    client, sample_epub, monkeypatch
+):
+    _slow(monkeypatch)
+    provider_id, (first, second, other) = _setup(client, sample_epub, books=3)
+    client.post(f"/api/glossary/{first}/entry", json={"source_term": "Moon", "target_term": "Luna"})
+    client.put(f"/api/compendium/{first}", json={"entries": [{"name": "Mara", "gender": "female"}]})
+    client.post(
+        "/api/queue",
+        json={
+            "book_ids": [first],
+            "provider_id": provider_id,
+            "keep_glossary": True,
+            "keep_compendium": True,
+        },
+    )
+    batch = _wait(client, lambda q: q["items"][0]["status"] == "running")["items"][0]["batch_id"]
+    # another queue started meanwhile: it runs after, and never carries from this one
+    client.post("/api/queue", json={"book_ids": [other], "provider_id": provider_id})
+    assert client.post(f"/api/queue/{batch}/books", json={"book_ids": [second]}).json() == {
+        "queued": 1
+    }
+
+    queue = _wait(client, lambda q: not q["running"])
+    assert [i["book_id"] for i in queue["items"]] == [first, second, other]
+    assert [i["batch_id"] == batch for i in queue["items"]] == [True, True, False]
+    assert {i["status"] for i in queue["items"]} == {"done"}
+    assert "Moon" in _terms(client, second) and "Moon" not in _terms(client, other)
+    names = [e["name"] for e in client.get(f"/api/compendium/{second}").json()]
+    assert "Mara" in names
+    assert client.post("/api/queue/999/books", json={"book_ids": [other]}).status_code == 400
+
+
+def test_books_added_to_a_paused_queue_wait_for_its_resume(client, sample_epub, monkeypatch):
+    _slow(monkeypatch)
+    provider_id, (first, second, third) = _setup(client, sample_epub, books=3)
+    client.post("/api/queue", json={"book_ids": [first, second], "provider_id": provider_id})
+    batch = _wait(client, lambda q: q["items"][0]["status"] == "running")["items"][0]["batch_id"]
+    client.post("/api/queue/stop")
+    _wait(client, lambda q: not q["running"])
+
+    client.post(f"/api/queue/{batch}/books", json={"book_ids": [third]})
+    queue = _wait(client, lambda q: not q["running"])
+    assert [i["status"] for i in queue["items"]] == ["paused", "paused", "paused"]
+
+    client.post("/api/queue/start")
+    queue = _wait(client, lambda q: not q["running"] and q["items"][-1]["status"] == "done")
+    assert [i["book_id"] for i in queue["items"]] == [first, second, third]
+    assert {i["status"] for i in queue["items"]} == {"done"}

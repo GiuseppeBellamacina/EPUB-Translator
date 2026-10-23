@@ -50,7 +50,7 @@ export function HistoryPage() {
 
   return (
     <Page title="Library" description="Every book you uploaded, with its translation status.">
-      {queue && queue.items.length > 0 && <QueuePanel queue={queue} onChange={load} />}
+      {queue && queue.items.length > 0 && <QueuePanel queue={queue} books={books ?? []} onChange={load} />}
 
       {selected.length > 0 && (
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-lg bg-ink px-5 py-3 text-on-ink">

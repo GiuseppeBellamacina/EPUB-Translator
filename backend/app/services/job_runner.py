@@ -98,14 +98,31 @@ def unsubscribe(book_id: int, queue: asyncio.Queue) -> None:
 
 async def enqueue(
     book_ids: list[int],
-    config: RunConfig,
+    config: RunConfig | None = None,
     keep_glossary: bool = False,
     front: bool = False,
     keep_compendium: bool = False,
+    batch_id: int | None = None,
 ) -> list[QueueItem]:
-    """Add books (a book already waiting gets the new settings and place), then run."""
+    """Add books as a new batch, or to the end of batch ``batch_id`` with its settings.
+
+    A batch is one queue: its books share the run settings and carry glossary and
+    compendium (when asked) from the previous book of the same batch. A book already
+    waiting gets the new settings and place. Then the queue runs.
+    """
     async with async_session() as db:
-        if not await db.get(ProviderConfig, config.provider_id):
+        batch: list[QueueItem] = []
+        if batch_id is not None:
+            result = await db.execute(
+                select(QueueItem).where(QueueItem.batch_id == batch_id).order_by(QueueItem.position)
+            )
+            batch = list(result.scalars())
+            if not batch:
+                raise ValueError("Queue not found")
+            config = RunConfig(**batch[-1].config)
+            keep_glossary = any(i.keep_glossary for i in batch)
+            keep_compendium = any(i.keep_compendium for i in batch)
+        if config is None or not await db.get(ProviderConfig, config.provider_id):
             raise ValueError("Provider not found")
         for book_id in book_ids:
             if not await db.get(Book, book_id):
@@ -119,22 +136,39 @@ async def enqueue(
         )
         for item in waiting.scalars():
             await db.delete(item)
-        bounds = (
-            await db.execute(select(func.min(QueueItem.position), func.max(QueueItem.position)))
-        ).one()
-        start = (bounds[0] or 0) - len(book_ids) if front else (bounds[1] or 0) + 1
+        await db.flush()
+
+        if batch:
+            # right after the batch's last book: later batches move down
+            start = max(i.position for i in batch) + 1
+            await db.execute(
+                update(QueueItem)
+                .where(QueueItem.position >= start)
+                .values(position=QueueItem.position + len(book_ids))
+            )
+        else:
+            bounds = (
+                await db.execute(select(func.min(QueueItem.position), func.max(QueueItem.position)))
+            ).one()
+            start = (bounds[0] or 0) - len(book_ids) if front else (bounds[1] or 0) + 1
+        # added to a paused batch: they wait for its resume instead of running ahead of it
+        status = "paused" if any(i.status == "paused" for i in batch) else "pending"
         items = [
             QueueItem(
                 book_id=book_id,
-                position=start + i,
+                position=start + n,
+                batch_id=batch_id,
                 config=config.model_dump(),
-                keep_glossary=keep_glossary and i > 0,  # never from an earlier batch
-                keep_compendium=keep_compendium and i > 0,
-                status="pending",
+                keep_glossary=keep_glossary,
+                keep_compendium=keep_compendium,
+                status=status,
             )
-            for i, book_id in enumerate(book_ids)
+            for n, book_id in enumerate(book_ids)
         ]
         db.add_all(items)
+        await db.flush()
+        for item in items:
+            item.batch_id = item.batch_id or items[0].id  # a new batch is named by its first item
         await db.commit()
     kick()
     return items
@@ -251,7 +285,11 @@ async def _previous_book(item: QueueItem) -> int | None:
     async with async_session() as db:
         return await db.scalar(
             select(QueueItem.book_id)
-            .where(QueueItem.position < item.position, QueueItem.status.in_(("done", "failed")))
+            .where(
+                QueueItem.batch_id == item.batch_id,  # never from another queue
+                QueueItem.position < item.position,
+                QueueItem.status.in_(("done", "failed")),
+            )
             .order_by(QueueItem.position.desc())
             .limit(1)
         )

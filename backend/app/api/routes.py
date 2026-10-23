@@ -553,6 +553,7 @@ async def get_queue(db: AsyncSession = Depends(get_db)):
                 "error": item.error,
                 "keep_glossary": item.keep_glossary,
                 "keep_compendium": bool(item.keep_compendium),
+                "batch_id": item.batch_id,
                 "config": item.config,
                 "completed_units": book.translated_chapters or 0,
                 "total_units": book.total_chapters,
@@ -570,6 +571,20 @@ async def add_to_queue(data: QueueAdd):
         items = await job_runner.enqueue(
             data.book_ids, config, data.keep_glossary, keep_compendium=data.keep_compendium
         )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"queued": len(items)}
+
+
+class BatchAdd(BaseModel):
+    book_ids: list[int]
+
+
+@router.post("/queue/{batch_id}/books")
+async def add_to_batch(batch_id: int, data: BatchAdd):
+    """Add books to the end of an existing queue: same settings, carry-over continues."""
+    try:
+        items = await job_runner.enqueue(data.book_ids, batch_id=batch_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"queued": len(items)}
