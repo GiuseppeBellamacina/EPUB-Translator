@@ -93,6 +93,7 @@ def test_progress_without_a_job(client, sample_epub):
         "recent_events": [],
         "config": None,
         "queue_status": None,
+        "queue": None,
     }
     assert client.get("/api/books/999/progress").status_code == 404
 

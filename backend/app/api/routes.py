@@ -334,7 +334,22 @@ async def get_progress(book_id: int, db: AsyncSession = Depends(get_db)):
                 QueueItem.book_id == book_id, QueueItem.status.in_(("pending", "paused"))
             )
         ),
+        "queue": await _book_queue(db, book_id),
     }
+
+
+async def _book_queue(db: AsyncSession, book_id: int) -> dict | None:
+    """The queue (batch) the book was last added to, when it has other books too."""
+    batch_id = await db.scalar(
+        select(QueueItem.batch_id)
+        .where(QueueItem.book_id == book_id, QueueItem.batch_id.is_not(None))
+        .order_by(QueueItem.id.desc())
+        .limit(1)
+    )
+    if batch_id is None:
+        return None
+    items = await _queue_items(db, QueueItem.batch_id == batch_id)
+    return {"batch_id": batch_id, "items": items} if len(items) > 1 else None
 
 
 @router.get("/books/{book_id}/estimate")
@@ -534,33 +549,36 @@ class QueueAdd(RunConfig):
     keep_compendium: bool = False
 
 
-@router.get("/queue")
-async def get_queue(db: AsyncSession = Depends(get_db)):
-    """Queued books in order, with their status and progress."""
+async def _queue_items(db: AsyncSession, *where) -> list[dict]:
+    """Queue items in order (optionally filtered), with their book's progress."""
     rows = await db.execute(
         select(QueueItem, Book)
         .join(Book, Book.id == QueueItem.book_id)
+        .where(*where)
         .order_by(QueueItem.position)
     )
-    return {
-        "running": job_runner.queue_running(),
-        "items": [
-            {
-                "id": item.id,
-                "book_id": book.id,
-                "filename": book.filename,
-                "status": item.status,
-                "error": item.error,
-                "keep_glossary": item.keep_glossary,
-                "keep_compendium": bool(item.keep_compendium),
-                "batch_id": item.batch_id,
-                "config": item.config,
-                "completed_units": book.translated_chapters or 0,
-                "total_units": book.total_chapters,
-            }
-            for item, book in rows.all()
-        ],
-    }
+    return [
+        {
+            "id": item.id,
+            "book_id": book.id,
+            "filename": book.filename,
+            "status": item.status,
+            "error": item.error,
+            "keep_glossary": item.keep_glossary,
+            "keep_compendium": bool(item.keep_compendium),
+            "batch_id": item.batch_id,
+            "config": item.config,
+            "completed_units": book.translated_chapters or 0,
+            "total_units": book.total_chapters,
+        }
+        for item, book in rows.all()
+    ]
+
+
+@router.get("/queue")
+async def get_queue(db: AsyncSession = Depends(get_db)):
+    """Queued books in order, with their status and progress."""
+    return {"running": job_runner.queue_running(), "items": await _queue_items(db)}
 
 
 @router.post("/queue")

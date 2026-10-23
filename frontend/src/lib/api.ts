@@ -279,6 +279,8 @@ export interface BookProgress {
   config: RunConfig | null;
   /** waiting in the queue: "pending", or "paused" after a stop/restart */
   queue_status: "pending" | "paused" | null;
+  /** the queue the book belongs to, when it has other books too */
+  queue: { batch_id: number; items: QueueItem[] } | null;
 }
 
 /** A run's settings, as the server stores them (snake_case). */
@@ -326,3 +328,12 @@ export interface CompendiumItem {
   /** edited by the user: the translation never changes it again */
   user_edited: boolean;
 }
+
+/** Queue item status → the book status pill it shows as. */
+export const QUEUE_PILL: Record<QueueItem["status"], string> = {
+  pending: "queued",
+  running: "translating",
+  paused: "paused",
+  done: "completed",
+  failed: "failed",
+};

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Download, Eye, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import {
@@ -21,6 +21,7 @@ import { CompendiumEditor } from "../components/CompendiumEditor";
 import { GlossaryEditor } from "../components/GlossaryEditor";
 import { LiveView } from "../components/LiveView";
 import { ProgressPanel } from "../components/ProgressPanel";
+import { QueueProgress } from "../components/QueueProgress";
 import { RunSettingsFields } from "../components/RunSettingsFields";
 import { Button, Card, Heading, Page, StatusPill } from "../components/ui";
 
@@ -43,8 +44,16 @@ export function TranslatePage() {
     api.getCompendium(id).then(setCompendium);
   }, [id]);
 
-  const { startTranslation, watchTranslation, stopTranslation, disconnect, isConnected, events, setEvents } =
-    useTranslationWs(refresh);
+  const {
+    startTranslation,
+    watchTranslation,
+    stopTranslation,
+    disconnect,
+    isConnected,
+    events,
+    setEvents,
+    lastMessage,
+  } = useTranslationWs(refresh);
 
   useEffect(() => {
     let active = true;
@@ -92,6 +101,23 @@ export function TranslatePage() {
       api.getCompendium(id).then(setCompendium);
     }
   }, [latest, id]);
+
+  // When this book of a queue finishes, follow the queue to its next book
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (lastMessage?.bookId !== id || lastMessage.event.event !== "job_complete") return;
+    let current = true;
+    api.getProgress(id).then((prog) => {
+      const items = prog.queue?.items ?? [];
+      const next = items
+        .slice(items.findIndex((i) => i.book_id === id) + 1)
+        .find((i) => i.status === "pending" || i.status === "running");
+      if (current && next) navigate(`/translate/${next.book_id}`);
+    });
+    return () => {
+      current = false;
+    };
+  }, [lastMessage, id, navigate]);
 
   const totalCost = useRunCost(id, providerId, model, enableReview, reviewModel);
   const chunks = useMemo(() => liveChunks(events), [events]);
@@ -216,6 +242,7 @@ export function TranslatePage() {
 
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
           <ProgressPanel progress={progress} unitName={unitName} unitAbbr={unitAbbr} spent={spent} />
+          {progress?.queue && <QueueProgress items={progress.queue.items} bookId={id} />}
           <LiveView chunks={chunks} unitName={isPdf ? "Page" : "Chapter"} targetLanguage={targetLang} />
           <ActivityLog events={events} unitAbbr={unitAbbr} />
         </div>
