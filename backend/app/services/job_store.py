@@ -15,6 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select, update
 
+from app.agents.glossary import Glossary
 from app.agents.pipeline import TranslationProgress
 from app.db.database import async_session
 from app.db.models import (
@@ -85,23 +86,24 @@ class JobStore:
                 for entry in await self._glossary_rows(db):
                     if not entry.user_edited:
                         await db.delete(entry)
+
+            # Load the glossary through the near-duplicate check (user terms first, so they
+            # win); duplicates learned before the check existed are deleted.
+            rows = sorted(await self._glossary_rows(db), key=lambda e: (not e.user_edited, e.id))
+            glossary = Glossary()
+            for row in rows:
+                if glossary.add([_item(row)]):
+                    continue
+                if not row.user_edited:
+                    await db.delete(row)
             await db.commit()
 
-            state = ResumeState(analysis=book.analysis)
+            state = ResumeState(analysis=book.analysis, glossary=glossary.entries)
             for i, chapter in chapters.items():
                 if chapter.block_translations is not None:
                     state.previous[i] = chapter.block_translations
                     if chapter.status == ChapterStatus.completed:
                         state.completed.add(i)
-            state.glossary = [
-                GlossaryItem(
-                    source_term=e.source_term,
-                    target_term=e.target_term,
-                    context=e.context,
-                    do_not_translate=e.do_not_translate,
-                )
-                for e in await self._glossary_rows(db)
-            ]
             return state
 
     async def start(self, provider: str, model: str, params: dict) -> None:
@@ -120,36 +122,17 @@ class JobStore:
             self.job_id = job.id
 
     async def import_glossary(self, from_book_id: int) -> list[GlossaryItem]:
-        """Copy another book's glossary; terms this book already has are kept as they are."""
+        """Copy another book's glossary; terms this book already has (or near-duplicates
+        of them) are kept as they are."""
         async with async_session() as db:
-            existing = {e.source_term.lower() for e in await self._glossary_rows(db)}
+            glossary = Glossary([_item(e) for e in await self._glossary_rows(db)])
             result = await db.execute(
                 select(GlossaryEntry).where(GlossaryEntry.book_id == from_book_id)
             )
-            added = []
-            for entry in result.scalars():
-                if entry.source_term.lower() in existing:
-                    continue
-                existing.add(entry.source_term.lower())
+            added = glossary.add([_item(e) for e in result.scalars()])
+            for item in added:
                 # user_edited: kept by a later "start over", like terms typed in the editor
-                db.add(
-                    GlossaryEntry(
-                        book_id=self.book_id,
-                        source_term=entry.source_term,
-                        target_term=entry.target_term,
-                        context=entry.context,
-                        do_not_translate=entry.do_not_translate,
-                        user_edited=True,
-                    )
-                )
-                added.append(
-                    GlossaryItem(
-                        source_term=entry.source_term,
-                        target_term=entry.target_term,
-                        context=entry.context,
-                        do_not_translate=entry.do_not_translate,
-                    )
-                )
+                db.add(GlossaryEntry(book_id=self.book_id, user_edited=True, **item.model_dump()))
             await db.commit()
         return added
 
@@ -256,3 +239,12 @@ class JobStore:
                 .where(Chapter.book_id == self.book_id, Chapter.status == ChapterStatus.completed)
             )
             await db.commit()
+
+
+def _item(row: GlossaryEntry) -> GlossaryItem:
+    return GlossaryItem(
+        source_term=row.source_term,
+        target_term=row.target_term,
+        context=row.context,
+        do_not_translate=row.do_not_translate,
+    )

@@ -7,11 +7,12 @@ added while translating one chapter is used by the next chunk anywhere.
 
 Model-proposed terms are validated before joining: the source term must occur
 in the source text it was proposed for, and an existing entry (user-edited or
-earlier) is never overwritten.
+earlier) is never overwritten, not even by a near-duplicate spelling of it.
 """
 
 import re
 
+from app.agents.similarity import TermIndex
 from app.models.schemas import GlossaryItem
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")
@@ -38,6 +39,7 @@ def _match_case(source: str, replacement: str) -> str:
 class Glossary:
     def __init__(self, entries: list[GlossaryItem] | None = None):
         self._entries: dict[str, GlossaryItem] = {}
+        self._known = TermIndex()  # source terms, for near-duplicates
         self.add(entries or [])
 
     @property
@@ -50,15 +52,18 @@ class Glossary:
     def add(self, items: list[GlossaryItem], source_text: str | None = None) -> list[GlossaryItem]:
         """Add new entries, returning those accepted.
 
-        Rejected: empty/1-char terms, duplicates of an existing source term, entries
-        without a target (unless do-not-translate) and — when ``source_text`` is
-        given — terms that do not occur in it (hallucinated by the model).
+        Rejected: empty/1-char terms, duplicates of an existing source term (also near
+        ones: "Mara's", "the Order", spelling variants), entries without a target
+        (unless do-not-translate) and — when ``source_text`` is given — terms that do
+        not occur in it (hallucinated by the model).
         """
         plain_source = _PLACEHOLDER.sub("", source_text) if source_text is not None else None
         accepted = []
         for item in items:
             key = _key(item.source_term)
             if len(key) < 2 or key in self._entries:
+                continue
+            if self._known.find_duplicate(key):
                 continue
             if not item.do_not_translate and not item.target_term.strip():
                 continue
@@ -71,6 +76,7 @@ class Glossary:
                 }
             )
             self._entries[key] = entry
+            self._known.add(key)
             accepted.append(entry)
         return accepted
 

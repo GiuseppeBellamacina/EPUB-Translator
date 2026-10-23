@@ -12,6 +12,7 @@ goes through the queue (``queue_items`` table), which runs one book at a time:
 
 import asyncio
 import copy
+import logging
 import time
 from collections import deque
 from datetime import datetime
@@ -44,6 +45,8 @@ class RunConfig(BaseModel):
     max_tokens: int | None = None
     restart: bool = False
 
+
+logger = logging.getLogger(__name__)
 
 # Running pipelines (for stop), per book: recent client messages (a page reload shows
 # the latest log), live subscribers and the current run's start (time, units done).
@@ -187,6 +190,8 @@ async def shutdown() -> None:
             await asyncio.wait_for(asyncio.shield(_runner), timeout=20)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
+        except Exception:  # a crashed runner must not block the shutdown
+            logger.exception("Queue runner failed")
 
 
 async def recover_queue() -> None:
@@ -213,12 +218,13 @@ async def _next_item() -> QueueItem | None:
 
 async def _set_item(item_id: int, status: str, error: str | None = None) -> None:
     async with async_session() as db:
-        item = await db.get(QueueItem, item_id)
-        if item:  # removed meanwhile
-            item.status, item.error = status, error
-            if status == "running":  # "start over" applies once, not to a later resume
-                item.config = {**item.config, "restart": False}
-            await db.commit()
+        values: dict = {"status": status, "error": error}
+        if status == "running":  # "start over" applies once, not to a later resume
+            config = await db.scalar(select(QueueItem.config).where(QueueItem.id == item_id))
+            values["config"] = {**(config or {}), "restart": False}
+        # a bulk UPDATE: the item may have been removed meanwhile (book deleted)
+        await db.execute(update(QueueItem).where(QueueItem.id == item_id).values(**values))
+        await db.commit()
 
 
 async def dequeue(book_id: int) -> bool:

@@ -83,3 +83,45 @@ async def test_review_can_be_disabled(llm, sample_epub):
     pipeline = TranslationPipeline(llm=llm, enable_review=False)
     await translate(sample_epub, pipeline)
     assert llm.calls_for(ReviewResult) == []
+
+
+def test_near_duplicates_of_known_terms_are_rejected():
+    g = Glossary([item("Ruijerd"), item("Fittoa Region", "Regione di Fittoa"), item("Order")])
+    accepted = g.add(
+        [
+            item("Ruijerd's"),  # possessive
+            item("the Fittoa region", "regione Fittoa"),  # article + case
+            item("Fittoa-Region", "Fittoa"),  # hyphen
+            item("Ruijerdo"),  # spelling variant of a longer name
+            item("The Order", "L'Ordine"),
+            item("Rudeus Greyrat"),  # different names stay
+            item("Sylphy"),
+            item("Water God Style", "Stile del Dio dell'Acqua"),
+            item("Water Goddess Style", "Stile della Dea dell'Acqua"),
+            item("Ruby"),  # short: only exact matches count
+            item("Rudy"),
+            item("Asura Kingdom", "Regno di Asura"),
+            item("Kingdom of Asura", "Regno di Asura"),  # word order
+            item("Demon Kings", "Re Demoni"),
+            item("Demon King", "Re Demone"),  # plural
+            item("Sword God", "Dio della Spada"),
+            item("Sword God Style", "Stile del Dio della Spada"),  # one more word: another term
+            item("Second Prince", "Secondo Principe"),
+            item("Second Princess", "Seconda Principessa"),
+        ]
+    )
+    assert [e.source_term for e in accepted] == [
+        "Rudeus Greyrat",
+        "Sylphy",
+        "Water God Style",
+        "Water Goddess Style",
+        "Ruby",
+        "Rudy",
+        "Asura Kingdom",
+        "Demon Kings",
+        "Sword God",
+        "Sword God Style",
+        "Second Prince",
+        "Second Princess",
+    ]
+    assert g.entries[1].target_term == "Regione di Fittoa"  # the existing entry wins
