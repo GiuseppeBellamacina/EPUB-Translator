@@ -18,7 +18,6 @@ from app.models.schemas import GlossaryItem
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")
 MIN_ENFORCE_LENGTH = 3
-MAX_RELEVANT = 60  # entries per prompt: the chunk's own terms first
 
 
 def _key(term: str) -> str:
@@ -95,7 +94,7 @@ class Glossary:
         return accepted
 
     def relevant(
-        self, text: str, context: str = "", limit: int = MAX_RELEVANT
+        self, text: str, context: str = "", limit: int | None = None
     ) -> list[GlossaryItem]:
         """Entries whose source term occurs in ``text``, then those only in ``context``
         (the text before it), at most ``limit``: prompts stay small."""

@@ -41,6 +41,7 @@ from app.agents.reviewer import review_translation
 from app.agents.translator_agent import aligned, split_paragraphs, translate_blocks
 from app.knowledge.store import CompendiumStore, GlossaryStore
 from app.models.schemas import AnalysisResult, CompendiumEntry, Doubt, GlossaryItem
+from app.services import app_settings
 from app.services.chunker import Chunk, SmartChunker, TextBlock
 
 MAX_DOUBTS = 3  # per chunk: the final review stays short
@@ -169,10 +170,17 @@ def build_chapter_graph(
 
     def context_node(state: ChapterState) -> dict[str, Any]:
         text, before = state.chunks[state.chunk_index].text, _previous(state)
+        limits = app_settings.load()  # changed from the UI: applies from the next chunk
         return {
-            "glossary_context": glossary.relevant(text, before) if features.use_glossary else [],
+            "glossary_context": (
+                glossary.relevant(text, before, limits.glossary_limit)
+                if features.use_glossary
+                else []
+            ),
             "compendium_context": (
-                compendium.relevant(text, before) if features.use_compendium else []
+                compendium.relevant(text, before, limits.compendium_limit)
+                if features.use_compendium
+                else []
             ),
         }
 

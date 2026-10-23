@@ -27,6 +27,7 @@ from app.agents.reviewer import resolve_doubts
 from app.agents.translator_agent import keep_unfinished, split_paragraphs
 from app.knowledge.matcher import TermMatcher
 from app.models.schemas import CompendiumEntry
+from app.services import app_settings
 from app.services.chunker import SmartChunker, TextBlock
 from app.services.documents import Document, Translations
 
@@ -389,6 +390,7 @@ async def translate_document(
         )
         touched: set[int] = set()
         f = pipeline.features
+        limits = app_settings.load()
 
         async def review(unit: int, block: int, queue: Queue) -> None:
             source = unit_blocks(unit)[block].text
@@ -404,10 +406,14 @@ async def translate_document(
                         translated_text=current,
                         doubts=sorted(set(doubts[(unit, block)])),
                         glossary=(
-                            pipeline.glossary.relevant(source, around) if f.use_glossary else []
+                            pipeline.glossary.relevant(source, around, limits.glossary_limit)
+                            if f.use_glossary
+                            else []
                         ),
                         compendium=(
-                            pipeline.compendium.relevant(source, around) if f.use_compendium else []
+                            pipeline.compendium.relevant(source, around, limits.compendium_limit)
+                            if f.use_compendium
+                            else []
                         ),
                         source_language=pipeline.source_language,
                         target_language=pipeline.target_language,

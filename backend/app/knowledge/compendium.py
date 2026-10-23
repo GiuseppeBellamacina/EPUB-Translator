@@ -17,7 +17,6 @@ from app.models.schemas import CompendiumEntry
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")
 MAX_NOTES = 300  # characters of notes per entry: prompts stay small
-MAX_RELEVANT = 25  # entries per prompt: the chunk's own mentions first
 
 
 def _key(name: str) -> str:
@@ -146,7 +145,7 @@ class Compendium:
         return list(changed.values())
 
     def relevant(
-        self, text: str, context: str = "", limit: int = MAX_RELEVANT
+        self, text: str, context: str = "", limit: int | None = None
     ) -> list[CompendiumEntry]:
         """Entries named in ``text`` (name or alias), then those only in ``context``
         (the text before it), at most ``limit``: prompts stay small."""
