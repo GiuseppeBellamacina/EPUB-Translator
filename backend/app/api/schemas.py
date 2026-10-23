@@ -1,19 +1,37 @@
 """Pydantic models for API request/response schemas."""
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --- Provider ---
 
 
+class ProviderParams(BaseModel):
+    """Per-provider overrides of the translation defaults (validated: they drive every job)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    requests_per_second: float | None = Field(None, ge=0)  # 0 = unlimited
+    max_concurrency: int | None = Field(None, ge=1, le=16)  # chapters in parallel
+    max_retries: int | None = Field(None, ge=0, le=20)
+    structured_output_method: Literal["function_calling", "json_mode", "json_schema"] | None = None
+
+
+def _clean_params(value: dict | None) -> dict | None:
+    return None if value is None else ProviderParams(**value).model_dump(exclude_none=True)
+
+
 class ProviderCreate(BaseModel):
     name: str
-    provider_type: str  # openai, anthropic, ollama, custom
+    provider_type: str  # openai, anthropic, openrouter, ollama, custom
     api_key: str | None = None
     base_url: str | None = None
     default_model: str | None = None
     params: dict | None = None
+
+    _params = field_validator("params")(_clean_params)
 
 
 class ProviderUpdate(BaseModel):
@@ -25,6 +43,8 @@ class ProviderUpdate(BaseModel):
     base_url: str | None = None
     default_model: str | None = None
     params: dict | None = None
+
+    _params = field_validator("params")(_clean_params)
 
 
 class ProviderModelsRequest(BaseModel):

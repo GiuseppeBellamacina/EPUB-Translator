@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
-import { AlertCircle, Check, Code2, Loader2 } from "lucide-react";
-import { api, type ModelOption, type Provider } from "../lib/api";
+import {
+  Dialog,
+  DialogPanel,
+  DialogTitle,
+  Disclosure,
+  DisclosureButton,
+  DisclosurePanel,
+} from "@headlessui/react";
+import { AlertCircle, Check, ChevronDown, Code2, Loader2 } from "lucide-react";
+import {
+  api,
+  OUTPUT_METHODS,
+  PROVIDER_PARAMS,
+  type AppSettings,
+  type ModelOption,
+  type Provider,
+} from "../lib/api";
 import { inputClass, labelClass } from "../lib/styles";
 import { cn } from "../lib/utils";
+import { Select } from "./controls";
 import { ModelCombobox } from "./ModelCombobox";
 import { ProviderLogo } from "./ProviderLogo";
 import { Button } from "./ui";
@@ -57,6 +72,19 @@ export function ProviderWizard({
   const [check, setCheck] = useState<Check>({ state: "idle" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // advanced params as typed ("" = use the default)
+  const [params, setParams] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      [...PROVIDER_PARAMS.map((p) => p.key), "structured_output_method"].map((key) => [
+        key,
+        provider?.params?.[key] != null ? String(provider.params[key]) : "",
+      ]),
+    ),
+  );
+  const [defaults, setDefaults] = useState<AppSettings["defaults"] | null>(null);
+  useEffect(() => {
+    api.getSettings().then((s) => setDefaults(s.defaults)).catch(() => {});
+  }, []);
 
   const baseUrl = url.trim() || undefined;
   const keyMissing = kind.key === "required" && !apiKey.trim() && !editing;
@@ -90,12 +118,22 @@ export function ProviderWizard({
     setSaving(true);
     setError(null);
     try {
+      // keep params the form does not edit; an empty field goes back to the default
+      const edited = Object.fromEntries(
+        Object.entries(params)
+          .filter(([, v]) => v.trim() !== "")
+          .map(([k, v]) => [k, k === "structured_output_method" ? v : Number(v)]),
+      );
+      const others = Object.fromEntries(
+        Object.entries(provider?.params ?? {}).filter(([k]) => !(k in params)),
+      );
       const data = {
         name: name.trim() || kind.id,
         provider_type: kind.type,
         base_url: baseUrl,
         default_model: model || undefined,
         api_key: apiKey.trim() || undefined,
+        params: { ...others, ...edited },
       };
       if (provider) await api.updateProvider(provider.id, data);
       else await api.createProvider(data);
@@ -251,6 +289,43 @@ export function ProviderWizard({
                 <input disabled placeholder="Waiting for the connection details" className={cn(inputClass, "h-13")} />
               )}
             </div>
+
+            <Disclosure as="div" className="rounded-md border border-line">
+              <DisclosureButton className="group flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium">
+                Advanced settings
+                <ChevronDown className="h-4 w-4 text-faint transition-transform group-data-open:rotate-180" aria-hidden="true" />
+              </DisclosureButton>
+              <DisclosurePanel className="flex flex-col gap-3 border-t border-line px-4 py-4">
+                <p className="m-0 text-xs text-faint">
+                  Override the translation defaults for this provider. Leave a field empty to use
+                  the default.
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {PROVIDER_PARAMS.map((p) => (
+                    <label key={p.key} className={cn(labelClass, "text-[13px]")}>
+                      {p.label}
+                      <input
+                        type="number"
+                        min={0}
+                        step={p.step}
+                        value={params[p.key]}
+                        onChange={(e) => setParams((s) => ({ ...s, [p.key]: e.target.value }))}
+                        placeholder={defaults ? `${defaults[p.key]} (default)` : "default"}
+                        className={cn(inputClass, "h-10 font-normal")}
+                      />
+                      <span className="text-xs font-normal text-faint">{p.hint}</span>
+                    </label>
+                  ))}
+                </div>
+                <Select
+                  label="Structured output"
+                  value={params.structured_output_method as (typeof OUTPUT_METHODS)[number]}
+                  options={OUTPUT_METHODS}
+                  onChange={(v) => setParams((s) => ({ ...s, structured_output_method: v }))}
+                  render={(v) => (v ? <span className="font-mono text-[13px]">{v}</span> : "Automatic")}
+                />
+              </DisclosurePanel>
+            </Disclosure>
 
             {error && <p className="m-0 text-sm text-danger">{error}</p>}
           </div>
