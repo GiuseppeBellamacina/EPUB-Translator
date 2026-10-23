@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Translation defaults; overridable by config.yaml `translation:` and per provider `params`
     max_concurrency: int = 2  # chapters translated in parallel
     chunk_tokens: int = 1000  # text per model call (consecutive short units are grouped up to it)
+    # changed from the UI at runtime too (services/app_settings.py writes them to config.yaml)
+    max_parallel_books: int = 1  # books translated at the same time
+    max_glossary_terms: int = 150  # entries per prompt, 0 = all the passage mentions
+    max_compendium_entries: int = 60
     requests_per_second: float = 0.5  # client-side rate limit per job (0 = unlimited)
     llm_max_retries: int = 5  # SDK retries with backoff (honours Retry-After on 429)
     chain_retries: int = 3  # retries of a whole agent call (parse errors, residual failures)

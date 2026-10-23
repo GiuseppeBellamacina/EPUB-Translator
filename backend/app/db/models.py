@@ -44,6 +44,8 @@ class Book(Base):
     total_chapters = Column(Integer, default=0)
     translated_chapters = Column(Integer, default=0)
     analysis = Column(JSON, nullable=True)  # genre/tone/summary, reused when resuming
+    # False: fixes after an edit start without asking (run switch, or confirmed once)
+    ask_before_fixes = Column(Boolean, nullable=True)
     token_profile = Column(JSON, nullable=True)  # cost_estimator.TokenProfile, computed once
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -18,6 +18,9 @@ translation:
   llm_max_retries: 5
   chain_retries: 3
   enable_review: true
+  max_parallel_books: 1
+  max_glossary_terms: 150
+  max_compendium_entries: 60
 
 pricing:
   models:

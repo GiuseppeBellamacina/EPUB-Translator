@@ -120,6 +120,7 @@ class JobStore:
         async with async_session() as db:
             book = await db.get(Book, self.book_id)
             book.status = BookStatus.translating
+            book.ask_before_fixes = params.get("ask_before_fixes", True)
             job = TranslationJob(
                 book_id=self.book_id,
                 provider=provider,

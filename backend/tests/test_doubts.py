@@ -117,7 +117,7 @@ async def test_a_glossary_change_is_replaced_as_is_and_the_rest_goes_to_the_mode
     unit = next(u for u, t in previous.items() if any("lighthouse" in x for x in t))
     exact = next(b for b, x in enumerate(previous[unit]) if "lighthouse" in x)
     other = next(b for b, x in enumerate(previous[unit]) if "lighthouse" not in x.lower())
-    change = {"quote": "lighthouse", "reason": "Glossary: lighthouse → faro", "new_text": "faro"}
+    change = {"quote": "lighthouse", "reason": "Glossary: lighthouse → torre", "new_text": "torre"}
     bookmarks = [
         {"unit": unit, "block": exact, "old_text": "lighthouse", **change},
         {"unit": unit, "block": other, "old_text": "lighthouse", **change},  # not there as is
@@ -132,14 +132,14 @@ async def test_a_glossary_change_is_replaced_as_is_and_the_rest_goes_to_the_mode
         bookmarks=bookmarks,
     )
     resolved = {e.data["block"]: e.data for e in again if e.event_type == "doubt_resolved"}
-    assert resolved[exact]["note"] == "Replaced lighthouse → faro"
+    assert resolved[exact]["note"] == "Replaced lighthouse → torre"
     assert (
-        "faro" in resolved[exact]["translation"]
+        "torre" in resolved[exact]["translation"]
         and "lighthouse" not in resolved[exact]["translation"]
     )
     assert len(llm.calls_for(DoubtResolution)) == 1  # only the block without an exact match
     out = open_document(again[-1].data["output_path"])
-    assert "faro" in out.text(unit)
+    assert "torre" in out.text(unit)
 
 
 async def test_bookmarks_added_during_the_review_are_reviewed_in_the_same_run(llm, sample_epub):

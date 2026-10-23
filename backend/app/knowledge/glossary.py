@@ -42,6 +42,14 @@ def replace_term(text: str, old: str, new: str) -> str:
     return _word_pattern(old).sub(lambda m: _match_case(m.group(0), new), text)
 
 
+def same_agreement(old: str, new: str) -> bool:
+    """Whether ``new`` can replace ``old`` without touching the words around it: same number
+    of words, each with the same ending (in Italian, Spanish... the ending carries gender and
+    number: "Bambino Benedetto" → "Fanciullo Benedetto" yes, → "Figlia Benedetta" no)."""
+    a, b = old.lower().split(), new.lower().split()
+    return len(a) == len(b) and all(x[-1:] == y[-1:] for x, y in zip(a, b))
+
+
 class Glossary:
     def __init__(self, entries: list[GlossaryItem] | None = None):
         self._entries: dict[str, GlossaryItem] = {}

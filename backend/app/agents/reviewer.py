@@ -141,8 +141,11 @@ tell what was not known then (a character's gender, who someone is, how a term i
 
 Decide for each DOUBT whether the TRANSLATION is right. If it is, return translation null. If \
 not, return the corrected translation of the whole passage: one paragraph, the same meaning, \
-every inline placeholder like <1>...</1> or <2/> kept, changing only what the doubts concern \
-(agreements, pronouns, a term). The passage may end mid-sentence: so must the translation.
+every inline placeholder like <1>...</1> or <2/> kept. Change what the doubts concern and \
+everything that depends on it, rewriting whole sentences when needed: a term or a character \
+that changes gender or number changes its articles, adjectives, participles and the pronouns \
+that refer to it. Leave the rest as it is. The passage may end mid-sentence: so must the \
+translation.
 
 {style_instructions}""",
         ),

@@ -9,7 +9,7 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/data
-      - ./config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config/config.yaml  # writable: runtime settings from the UI are saved here
       # Mounted as a file (not env_file) because keys like OPENAI-API-KEY are not valid env names
       - ./.env:/run/secrets/app.env:ro
     environment:

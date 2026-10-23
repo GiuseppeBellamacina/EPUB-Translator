@@ -18,6 +18,8 @@ class RunConfig(BaseModel):
     use_compendium: bool = True
     learn_compendium: bool = True
     doubt_review: bool = True
+    # after an edit touching many passages (or notes), ask before fixing them; off: fix
+    ask_before_fixes: bool = True
     source_language: str | None = None  # None: the book's own
     target_language: str | None = None
     style_instructions: str = ""
