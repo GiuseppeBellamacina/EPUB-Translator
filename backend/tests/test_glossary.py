@@ -136,3 +136,11 @@ def test_near_duplicates_of_known_terms_are_rejected():
         "Second Princess",
     ]
     assert g.entries[1].target_term == "Regione di Fittoa"  # the existing entry wins
+
+
+def test_a_do_not_translate_term_with_a_translation_is_translated():
+    flagged = GlossaryItem(
+        source_term="Blessed Child", target_term="Bambino Benedetto", do_not_translate=True
+    )
+    g = Glossary([flagged, item("Paul", dnt=True)])
+    assert [e.do_not_translate for e in g.entries] == [False, True]

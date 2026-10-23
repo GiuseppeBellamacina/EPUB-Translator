@@ -63,7 +63,8 @@ class Glossary:
         Rejected: empty/1-char terms, duplicates of an existing source term (also near
         ones: "Mara's", "the Order", spelling variants), entries without a target
         (unless do-not-translate) and — when ``source_text`` is given — terms that do
-        not occur in it (hallucinated by the model).
+        not occur in it (hallucinated by the model). A do-not-translate entry with a
+        different target is kept as a translation.
         """
         plain_source = _PLACEHOLDER.sub("", source_text) if source_text is not None else None
         accepted = []
@@ -77,10 +78,14 @@ class Glossary:
                 continue
             if plain_source is not None and not _word_pattern(key).search(plain_source):
                 continue
+            target = item.target_term.strip()
             entry = item.model_copy(
                 update={
                     "source_term": item.source_term.strip(),
-                    "target_term": item.target_term.strip(),
+                    "target_term": target,
+                    # models flag terms "do not translate" and still give a translation
+                    # ("Blessed Child" → "Bambino Benedetto"): the translation wins
+                    "do_not_translate": item.do_not_translate and _key(target) in ("", key),
                 }
             )
             self._entries[key] = entry
