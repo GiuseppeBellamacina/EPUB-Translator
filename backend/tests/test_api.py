@@ -177,3 +177,48 @@ def test_single_entries_are_edited_while_a_live_store_holds_the_book(client, sam
     client.put(url, json={"source_term": "Mara", "target_term": "Marta"})
     assert [g["target_term"] for g in client.get(f"/api/glossary/{bid}").json()] == ["Marta"]
     assert client.delete(url).json() == {"status": "deleted"}
+
+
+def test_a_gender_changed_by_hand_bookmarks_the_translated_mentions(client, sample_epub):
+    provider, book = _upload(client, sample_epub)
+    _run(client, book["id"], provider["id"])
+    added = client.post(f"/api/compendium/{book['id']}/entry", json={"name": "Mara"}).json()
+    url = f"/api/compendium/{book['id']}/entry/{added['id']}"
+    client.put(url, json={"name": "Mara", "gender": "male"})  # unknown → male: nothing to redo
+    assert client.get(f"/api/books/{book['id']}/bookmarks").json() == []
+
+    edited = client.put(url, json={"name": "Mara", "gender": "female"}).json()
+    marks = client.get(f"/api/books/{book['id']}/bookmarks").json()
+    assert edited["bookmarked"] == len(marks) > 1
+    assert {m["reason"] for m in marks} == {"Compendium edited: Mara is female"}
+
+
+def test_deleting_a_term_removes_it_from_the_series_unless_edited_there(client, sample_epub):
+    import sqlite3
+
+    from app.core.config import settings
+
+    def upload():
+        with open(sample_epub, "rb") as f:
+            return client.post("/api/upload", files={"file": ("sample.epub", f)}).json()
+
+    first, second, other = upload(), upload(), upload()  # other: not in the series
+    with sqlite3.connect(settings.db_path) as conn:
+        for position, book_id in enumerate((first["id"], second["id"])):
+            conn.execute(
+                "insert into queue_items (book_id, position, config, keep_glossary, batch_id, "
+                "status) values (?, ?, '{}', 1, 1, 'done')",
+                (book_id, position),
+            )
+        for book_id in (second["id"], other["id"]):
+            conn.execute(
+                "insert into glossary_entries (book_id, source_term, target_term, "
+                "do_not_translate, user_edited) values (?, 'Mara', 'Marta', 0, 0)",
+                (book_id,),
+            )
+    term = client.post(
+        f"/api/glossary/{first['id']}/entry", json={"source_term": "mara", "target_term": "M"}
+    ).json()
+    client.delete(f"/api/glossary/{first['id']}/entry/{term['id']}")
+    assert client.get(f"/api/glossary/{second['id']}").json() == []
+    assert len(client.get(f"/api/glossary/{other['id']}").json()) == 1

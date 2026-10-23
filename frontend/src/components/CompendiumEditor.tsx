@@ -37,6 +37,7 @@ export function CompendiumEditor({
   const [busyRow, setBusyRow] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const update = (index: number, patch: Partial<CompendiumItem>) => {
     setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch, user_edited: true, dirty: true } : e)));
@@ -68,8 +69,13 @@ export function CompendiumEditor({
     if (!entry.name) return setError("An entry needs a name");
     setBusyRow(index);
     await attempt(async () => {
-      const stored = await api.saveCompendiumEntry(bookId, entry);
+      const { bookmarked, ...stored } = await api.saveCompendiumEntry(bookId, entry);
       setEntries((prev) => prev.map((e, i) => (i === index ? stored : e)));
+      setNotice(
+        bookmarked
+          ? `${bookmarked} translated ${bookmarked === 1 ? "passage names" : "passages name"} ${stored.name}: the doubt review will recheck them.`
+          : null,
+      );
     }, `Could not save ${entry.name}`);
     setBusyRow(null);
   };
@@ -208,6 +214,7 @@ export function CompendiumEditor({
       </ul>
 
       {error && <p className="m-0 text-sm text-danger">{error}</p>}
+      {notice && <p className="m-0 text-sm text-muted">{notice}</p>}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button

@@ -154,3 +154,14 @@ async def test_a_series_store_is_shared_live_and_written_to_every_member(db):
     again = await registry.acquire("glossary", "series:1", a, {a, b})
     assert again is not first  # released by every job: reloaded from the database
     assert len(again.glossary) == 21
+
+
+def test_joined_names_are_split_and_repeated_notes_skipped():
+    c = Compendium()
+    text = "Sylphie smiled. Sylphiette was her full name."
+    c.merge([e("Sylphie / Sylphiette", gender="female", notes="Rudy's fiancée, shy.")], text)
+    c.merge([e("Sylphie", notes="Rudy's fiancée, shy and caring.")], text)
+    [sylphie] = c.entries
+    assert (sylphie.name, sylphie.aliases) == ("Sylphie", ["Sylphiette"])
+    assert sylphie.notes == "Rudy's fiancée, shy. Rudy's fiancée, shy and caring."  # "caring" new
+    assert c.merge([e("Sylphie", notes="Shy, Rudy's fiancée.")], text) == []

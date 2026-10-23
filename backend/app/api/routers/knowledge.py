@@ -4,16 +4,25 @@ Edits are allowed while the book translates: the database is the source of truth
 and the live stores holding the book reload, so the running job uses them at once.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.pipeline import TranslationProgress
 from app.api.schemas import GlossaryEntryCreate, GlossaryEntryResponse, GlossaryUpdate
+from app.core.config import settings
 from app.db.database import get_db
-from app.db.models import CompendiumRecord, GlossaryEntry
+from app.db.models import Book, Chapter, CompendiumRecord, GlossaryEntry, QueueItem
 from app.jobs import jobs
+from app.knowledge.store import compendium_entry
 from app.models.schemas import CompendiumEntry
+from app.services.chunker import make_chunker
+from app.services.documents import open_document
+from app.services.job_store import JobStore
+from app.services.translation_service import naming_blocks
 
 router = APIRouter()
 
@@ -23,6 +32,43 @@ async def _entry(db: AsyncSession, model, book_id: int, entry_id: int):
     if row is None or row.book_id != book_id:
         raise HTTPException(404, "Entry not found")
     return row
+
+
+async def _series_books(db: AsyncSession, book_id: int, keeps) -> set[int]:
+    """The book and the books of its series (queues sharing ``keeps``: glossary/compendium)."""
+    batches = select(QueueItem.batch_id).where(QueueItem.book_id == book_id, keeps.is_(True))
+    rows = await db.execute(select(QueueItem.book_id).where(QueueItem.batch_id.in_(batches)))
+    return {book_id, *rows.scalars()}
+
+
+async def _bookmark_mentions(db: AsyncSession, book_id: int, entry: CompendiumEntry) -> int:
+    """A gender changed by hand: the translated blocks naming the entry go to the doubt
+    review (of the running job, or of the next run)."""
+    rows = await db.execute(
+        select(Chapter).where(Chapter.book_id == book_id, Chapter.block_translations.is_not(None))
+    )
+    translated = {c.order_index: c.block_translations for c in rows.scalars()}
+    book = await db.get(Book, book_id)
+    if not translated or book is None:
+        return 0
+    chunker = make_chunker(settings.chunk_tokens)  # block extraction does not depend on size
+
+    def find() -> dict[int, list[dict]]:
+        doc = open_document(book.original_path)
+        reason = lambda e: f"Compendium edited: {e.name} is {e.gender}"  # noqa: E731
+        return naming_blocks([entry], translated, lambda i: doc.blocks(i, chunker), reason)
+
+    found = await asyncio.to_thread(find)
+    store = JobStore(book_id)
+    for unit, doubts in found.items():
+        await store.handle(
+            TranslationProgress(
+                event_type="doubt_flagged", chapter_index=unit, data={"doubts": doubts}
+            )
+        )
+    if pipeline := jobs.runner.active.get(book_id):
+        pipeline.added_bookmarks += [{"unit": u, **d} for u, ds in found.items() for d in ds]
+    return sum(len(d) for d in found.values())
 
 
 async def _save(db: AsyncSession, book_id: int, row=None) -> None:
@@ -78,7 +124,17 @@ async def edit_glossary_entry(
 
 @router.delete("/glossary/{book_id}/entry/{entry_id}")
 async def delete_glossary_entry(book_id: int, entry_id: int, db: AsyncSession = Depends(get_db)):
-    await db.delete(await _entry(db, GlossaryEntry, book_id, entry_id))
+    """Also from the series' other books, unless edited there: it would come back."""
+    row = await _entry(db, GlossaryEntry, book_id, entry_id)
+    books = await _series_books(db, book_id, QueueItem.keep_glossary)
+    await db.execute(
+        delete(GlossaryEntry).where(
+            GlossaryEntry.book_id.in_(books - {book_id}),
+            func.lower(GlossaryEntry.source_term) == row.source_term.lower(),
+            GlossaryEntry.user_edited.is_not(True),
+        )
+    )
+    await db.delete(row)
     await _save(db, book_id)
     return {"status": "deleted"}
 
@@ -135,16 +191,28 @@ async def edit_compendium_entry(
 ):
     """Change one entry, also while translating: it becomes the user's."""
     row = await _entry(db, CompendiumRecord, book_id, entry_id)
+    flipped = {row.gender, entry.gender} == {"male", "female"}
     for key, value in entry.model_dump().items():
         setattr(row, key, value)
     row.user_edited = True
     await _save(db, book_id, row)
-    return _compendium_row(row)
+    bookmarked = await _bookmark_mentions(db, book_id, compendium_entry(row)) if flipped else 0
+    return {**_compendium_row(row), "bookmarked": bookmarked}
 
 
 @router.delete("/compendium/{book_id}/entry/{entry_id}")
 async def delete_compendium_entry(book_id: int, entry_id: int, db: AsyncSession = Depends(get_db)):
-    await db.delete(await _entry(db, CompendiumRecord, book_id, entry_id))
+    """Also from the series' other books, unless edited there: it would come back."""
+    row = await _entry(db, CompendiumRecord, book_id, entry_id)
+    books = await _series_books(db, book_id, QueueItem.keep_compendium)
+    await db.execute(
+        delete(CompendiumRecord).where(
+            CompendiumRecord.book_id.in_(books - {book_id}),
+            func.lower(CompendiumRecord.name) == row.name.lower(),
+            CompendiumRecord.user_edited.is_not(True),
+        )
+    )
+    await db.delete(row)
     await _save(db, book_id)
     return {"status": "deleted"}
 

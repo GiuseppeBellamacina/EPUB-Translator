@@ -30,6 +30,12 @@ def _quoted(quote: str, text: str) -> bool:
     return len(quote) > 3 and quote in " ".join(text.lower().split())
 
 
+def _repeats(note: str, notes: str) -> bool:
+    """Whether ``note`` says nothing new: its words are (nearly all) in ``notes`` already."""
+    words, known = set(content_words(note)), set(content_words(notes))
+    return len(words & known) >= 0.8 * len(words)
+
+
 def _mentioned(name: str, text: str) -> bool:
     return bool(re.search(r"(?<!\w)" + re.escape(name.strip()) + r"(?!\w)", text, re.IGNORECASE))
 
@@ -88,6 +94,11 @@ class Compendium:
         plain = _PLACEHOLDER.sub("", source_text) if source_text is not None else None
         changed: dict[int, CompendiumEntry] = {}
         for update in updates:
+            # models join names in one: "Sylphie / Sylphiette" is a name and an alias
+            first, *others = [n.strip() for n in update.name.split("/")] or [""]
+            update = update.model_copy(
+                update={"name": first, "aliases": [*others, *update.aliases]}
+            )
             names = [n.strip() for n in [update.name, *update.aliases] if len(n.strip()) > 1]
             if plain is not None:
                 if not any(_mentioned(n, plain) for n in names):
@@ -126,7 +137,7 @@ class Compendium:
                 if self._register(index, alias):
                     new.aliases.append(alias)
             note = update.notes.strip()
-            if note and note.lower() not in new.notes.lower():
+            if note and not _repeats(note, new.notes):
                 combined = f"{new.notes} {note}".strip()
                 new.notes = combined if len(combined) <= MAX_NOTES else new.notes or note
             if new != entry or index in changed:
