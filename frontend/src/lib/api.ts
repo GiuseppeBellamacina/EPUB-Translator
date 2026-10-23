@@ -126,7 +126,8 @@ export const api = {
       body: JSON.stringify(entry),
     }),
   /** review the book's open bookmarks now (a fix-only run for a finished book) */
-  startFixes: (bookId: number) => request<{ started: boolean }>(`/books/${bookId}/fixes`, { method: "POST" }),
+  startFixes: (bookId: number, remember = false) =>
+    request<{ started: boolean }>(`/books/${bookId}/fixes`, { method: "POST", body: JSON.stringify({ remember }) }),
   deleteCompendiumEntry: (bookId: number, id: number) =>
     request(`/compendium/${bookId}/entry/${id}`, { method: "DELETE" }),
 
@@ -329,6 +330,11 @@ export const FEATURES = [
   { key: "use_compendium", label: "Use the compendium", hint: "Genders and notes in every prompt" },
   { key: "learn_compendium", label: "Learn characters", hint: "New characters, genders, aliases" },
   { key: "doubt_review", label: "Doubt review", hint: "Revisit the guesses at the end of the book" },
+  {
+    key: "ask_before_fixes",
+    label: "Ask before large fixes",
+    hint: "After an edit touching 50+ passages or notes; off: fix right away",
+  },
 ] as const;
 export type Features = Record<(typeof FEATURES)[number]["key"], boolean>;
 

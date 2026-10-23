@@ -25,7 +25,7 @@ from typing import Any
 from app.agents.pipeline import TranslationPipeline, TranslationProgress
 from app.agents.reviewer import resolve_doubts
 from app.agents.translator_agent import keep_unfinished, split_paragraphs
-from app.knowledge.glossary import replace_term
+from app.knowledge.glossary import replace_term, same_agreement
 from app.knowledge.matcher import TermMatcher
 from app.services import app_settings
 from app.services.chunker import SmartChunker, TextBlock
@@ -415,7 +415,11 @@ async def translate_document(
         for d in found:
             if d.get("old_text") and d.get("new_text"):
                 text = replace_term(text, d["old_text"], d["new_text"])
-        exact = text != current and all(d.get("old_text") and d.get("new_text") for d in found)
+        # without the model only when nothing around the term has to agree with it
+        exact = text != current and all(
+            d.get("old_text") and d.get("new_text") and same_agreement(d["old_text"], d["new_text"])
+            for d in found
+        )
         fixed, note = None, ""
         if exact:  # every change done without the model
             fixed = text

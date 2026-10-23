@@ -212,7 +212,22 @@ def test_a_gender_change_fixes_the_translated_mentions_by_itself(client, sample_
 
     notes = client.put(url, json={"name": "Mara", "gender": "male", "notes": "Old keeper."}).json()
     assert notes["confirm"] and not notes["fixing"]  # notes: asks first
-    assert client.post(f"/api/books/{book['id']}/fixes").json() == {"started": True}
+    answer = client.post(f"/api/books/{book['id']}/fixes", json={"remember": True}).json()
+    assert answer == {"started": True}
+    _settled(client, book["id"])
+    # said yes once: the next change is fixed without asking
+    later = client.put(url, json={"name": "Mara", "gender": "male", "notes": "Keeper."}).json()
+    assert later["fixing"] and not later["confirm"]
+    _settled(client, book["id"])
+
+
+def test_a_run_can_choose_never_to_ask_before_fixes(client, sample_epub):
+    provider, book = _upload(client, sample_epub)
+    _run(client, book["id"], provider["id"], ask_before_fixes=False)
+    added = client.post(f"/api/compendium/{book['id']}/entry", json={"name": "Mara"}).json()
+    url = f"/api/compendium/{book['id']}/entry/{added['id']}"
+    edited = client.put(url, json={"name": "Mara", "notes": "The keeper."}).json()
+    assert edited["fixing"] and not edited["confirm"]
     _settled(client, book["id"])
 
 

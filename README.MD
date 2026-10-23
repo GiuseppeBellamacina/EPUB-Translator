@@ -13,7 +13,7 @@ gender of every character consistent from the first page to the last.
 - **Glossary**: built while translating, enforced; near-duplicates (*Demon Kings* / *Demon King*, *Kingdom of Asura* / *Asura Kingdom*, spelling variants) are recognised and never added twice. Each prompt gets only the terms its passage uses (plurals and possessives included), the passage's own first.
 - **Compendium**: characters with their gender, aliases and translation notes, plus places and other recurring elements. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue. A guessed gender is corrected when the text proves otherwise (the quote is kept as evidence).
 - **Edit while translating**: change or delete a single glossary term or compendium entry at any time; the running job uses it from the next chunk.
-- **Targeted fixes after the fact**: change a term's translation or a character's gender once the book is done, and only the passages that name it are fixed — by direct replacement where the old translation appears as is, by the model (one passage at a time, told exactly what changed) elsewhere. Nothing else is read again.
+- **Targeted fixes after the fact**: change a term's translation or a character's gender once the book is done, and only the passages that name it are fixed — by direct replacement where the old translation appears as is and nothing around it has to change, by the model elsewhere (one passage at a time, told exactly what changed, free to rewrite the sentence so articles, adjectives and pronouns agree). Nothing else is read again. Large changes ask once per book, or never with the *Ask before large fixes* switch off.
 - **Doubts**: the translator bookmarks what it had to guess (a gender not revealed yet, who *she* is, an unknown term); a corrected gender bookmarks the passages already translated. At the end of the book a dedicated review revisits them with everything learned since and fixes what was wrong.
 - **Fewer, fuller calls**: chunks of a configurable size (default ~1000 tokens); short PDF pages are translated together, so a sentence crossing pages stays in one call.
 - **Switches**: turn the analysis, glossary (use / learn / enforce), compendium (use / learn), per-chunk review and doubt review on or off per run.
@@ -100,6 +100,9 @@ providers:                 # upserted by name; skipped if their key is missing f
 translation:               # defaults for every job
   max_concurrency: 2       # chapters translated in parallel
   chunk_tokens: 1000       # text per call (300–3000); short PDF pages are grouped up to it
+  max_parallel_books: 1    # these three are also set from the UI, which writes them here
+  max_glossary_terms: 150  # glossary terms per prompt (0 = all the passage names)
+  max_compendium_entries: 60
   requests_per_second: 0.5
   llm_max_retries: 5       # SDK retries with backoff on 429/5xx
   chain_retries: 3         # retries of a whole call (invalid structured output)

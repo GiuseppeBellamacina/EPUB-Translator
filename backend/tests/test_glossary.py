@@ -158,3 +158,11 @@ async def test_the_prompt_limit_is_read_from_the_settings_at_every_chunk(llm, sa
         assert prompts and all(p.count(" → ") == 1 for p in prompts)
     finally:
         app_settings.save(app_settings.AppSettings())
+
+
+def test_a_replacement_changing_gender_or_number_is_left_to_the_model():
+    from app.knowledge.glossary import same_agreement
+
+    assert same_agreement("Bambino Benedetto", "Fanciullo Benedetto")
+    assert not same_agreement("Bambino Benedetto", "Figlia Benedetta")
+    assert not same_agreement("Bambino Benedetto", "Prescelto")

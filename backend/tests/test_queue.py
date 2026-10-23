@@ -318,4 +318,52 @@ def test_settings_change_only_what_is_sent(client):
     got = client.put("/api/settings", json={"max_parallel_books": 2}).json()
     assert (got["max_glossary_terms"], got["max_compendium_entries"]) == (0, 5)
     assert client.put("/api/settings", json={"max_compendium_entries": -1}).status_code == 422
-    client.put("/api/settings", json={"max_parallel_books": 1})
+    client.put(
+        "/api/settings",
+        json={"max_parallel_books": 1, "max_glossary_terms": 150, "max_compendium_entries": 60},
+    )
+
+
+def test_settings_are_saved_in_config_yaml_and_settings_json_moves_there(tmp_path, monkeypatch):
+    import json
+
+    import yaml
+
+    from app.core.config import settings
+    from app.services import app_settings
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "providers:\n- name: fake\n  type: fake\ntranslation:\n  max_concurrency: 3\n"
+    )
+    monkeypatch.setattr(settings, "config_file", config)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    (tmp_path / "settings.json").write_text(json.dumps({"max_parallel_books": 3}))
+    try:
+        app_settings.migrate_legacy()
+        assert not (tmp_path / "settings.json").exists()
+        saved = yaml.safe_load(config.read_text())
+        assert saved["providers"] == [{"name": "fake", "type": "fake"}]
+        assert saved["translation"]["max_concurrency"] == 3
+        assert (
+            saved["translation"]["max_parallel_books"]
+            == 3
+            == app_settings.load().max_parallel_books
+        )
+    finally:
+        app_settings.save(app_settings.AppSettings())
+
+
+def test_saving_settings_changes_only_their_lines_in_config_yaml():
+    from app.services.app_settings import set_keys
+
+    text = (
+        "providers:\n  - name: fake  # dev\n\ntranslation:\n  max_concurrency: 2\n\npricing: {}\n"
+    )
+    assert set_keys(text, "translation", {"max_concurrency": 4, "max_parallel_books": 2}) == (
+        "providers:\n  - name: fake  # dev\n\ntranslation:\n  max_concurrency: 4\n"
+        "  max_parallel_books: 2\n\npricing: {}\n"
+    )
+    assert set_keys("providers: []\n", "translation", {"a": 1}) == (
+        "providers: []\n\ntranslation:\n  a: 1\n"
+    )

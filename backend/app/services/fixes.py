@@ -67,6 +67,15 @@ async def bookmark_mentions(book_id: int, names: list[str], **doubt) -> int:
     return sum(len(d) for d in found.values())
 
 
+async def remember_yes(book_ids: list[int]) -> None:
+    """The user confirmed fixes for these books: do not ask again."""
+    async with async_session() as db:
+        for book_id in book_ids:
+            if book := await db.get(Book, book_id):
+                book.ask_before_fixes = False
+        await db.commit()
+
+
 async def start_fixes(book_id: int) -> bool:
     """Make the book's open bookmarks be reviewed: a running or queued job does it; a
     completed book gets a review-only run with its last settings. False if it cannot
@@ -93,7 +102,12 @@ async def start_fixes(book_id: int) -> bool:
         try:
             # never "start over" again, and the review must run whatever the last run chose
             config = RunConfig(
-                **{**(job.params if job else {}), "restart": False, "doubt_review": True}
+                **{
+                    **(job.params if job else {}),
+                    "restart": False,
+                    "doubt_review": True,
+                    "ask_before_fixes": book.ask_before_fixes is not False,  # a "yes" stays
+                }
             )
         except ValidationError:
             return False
@@ -105,13 +119,17 @@ async def start_fixes(book_id: int) -> bool:
 
 async def follow_change(keeps, book_id: int, names: list[str], auto: bool = True, **doubt) -> dict:
     """Bookmark the passages a change touches in the book and its series, and start their
-    fixes when they are few (``auto``). The UI asks before ``start_fixes`` otherwise."""
+    fixes when they are few (``auto``) or the books are not to be asked (``ask_before_fixes``
+    off). The UI asks before ``start_fixes`` otherwise, once per book."""
     counts = {
         b: await bookmark_mentions(b, names, **doubt) for b in await series_books(book_id, keeps)
     }
     books = sorted(b for b, n in counts.items() if n)
     total = sum(counts.values())
-    fixing = auto and 0 < total <= AUTO_FIX_LIMIT
+    async with async_session() as db:
+        rows = await db.execute(select(Book.ask_before_fixes).where(Book.id.in_(books)))
+        ask = any(flag is not False for flag in rows.scalars())
+    fixing = total > 0 and (not ask or (auto and total <= AUTO_FIX_LIMIT))
     started = [b for b in books if await start_fixes(b)] if fixing else []
     return {
         "bookmarked": total,

@@ -21,9 +21,11 @@ export async function followFixes(saved: object, name: string): Promise<string |
   if (result.fixing) return `${passages}: fixing them now, only them.`;
   if (
     result.confirm &&
-    window.confirm(`${passages}. Fix them now? Exact replacements need no model; the others take one call each.`)
+    window.confirm(
+      `${passages}. Fix them now? Each takes at most one model call.\n\nYou will not be asked again for this book.`,
+    )
   ) {
-    const started = await Promise.all((result.books ?? []).map((id) => api.startFixes(id)));
+    const started = await Promise.all((result.books ?? []).map((id) => api.startFixes(id, true)));
     if (started.some((s) => s.started)) return `${passages}: fixing them now, only them.`;
   }
   return `${passages}: bookmarked. They are fixed by the next run (or "Review doubts" on a finished book).`;

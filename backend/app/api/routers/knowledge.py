@@ -14,7 +14,7 @@ from app.db.database import get_db
 from app.db.models import CompendiumRecord, GlossaryEntry, QueueItem
 from app.jobs import jobs
 from app.models.schemas import CompendiumEntry
-from app.services.fixes import follow_change, series_books, start_fixes
+from app.services.fixes import follow_change, remember_yes, series_books, start_fixes
 
 router = APIRouter()
 
@@ -86,7 +86,8 @@ async def edit_glossary_entry(
             book_id,
             [term],
             quote=term,
-            reason=f"Glossary: {term} is now translated {new.strip()} (was {old.strip()})",
+            reason=f"Glossary: {term} is now translated {new.strip()} (was {old.strip()}); "
+            "make the words around it agree",
             old_text=old.strip(),
             new_text=new.strip(),
         )
@@ -183,9 +184,15 @@ async def edit_compendium_entry(
     return result
 
 
+class FixRequest(BaseModel):
+    remember: bool = False  # the user said yes: do not ask again for this book
+
+
 @router.post("/books/{book_id}/fixes")
-async def fix_bookmarks(book_id: int):
+async def fix_bookmarks(book_id: int, data: FixRequest | None = None):
     """Review the book's open bookmarks now (a review-only run for a completed book)."""
+    if data and data.remember:
+        await remember_yes([book_id])
     return {"started": await start_fixes(book_id)}
 
 
