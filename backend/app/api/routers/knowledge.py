@@ -13,6 +13,7 @@ from app.api.schemas import GlossaryEntryCreate, GlossaryEntryResponse, Glossary
 from app.db.database import get_db
 from app.db.models import CompendiumRecord, GlossaryEntry, QueueItem
 from app.jobs import jobs
+from app.knowledge.compendium import mention_names
 from app.models.schemas import CompendiumEntry
 from app.services.fixes import follow_change, remember_yes, series_books, start_fixes
 
@@ -170,7 +171,7 @@ async def edit_compendium_entry(
     row.user_edited = True
     await _save(db, book_id, row)
     result = _compendium_row(row)
-    names, notes = [entry.name, *entry.aliases], entry.notes.strip()
+    names, notes = mention_names(entry), entry.notes.strip()
     if entry.gender in ("male", "female") and entry.gender != old_gender:
         reason = f"{entry.name}: gender {old_gender} → {entry.gender}"
         result |= await follow_change(

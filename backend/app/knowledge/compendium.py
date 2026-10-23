@@ -152,6 +152,26 @@ class Compendium:
         return [self._entries[i] for i in self._matcher.rank(text, context, limit)]
 
 
+_TITLES = {
+    "captain", "lord", "lady", "sir", "dame", "king", "queen", "prince", "princess", "master",
+    "mister", "miss", "mr", "mrs", "ms", "dr", "doctor", "saint", "father", "mother", "uncle",
+    "aunt", "the", "of",
+}  # fmt: skip
+
+
+def mention_names(entry: CompendiumEntry) -> list[str]:
+    """How the text may name the entry: name, aliases and, for a character, each part of
+    the name ("Rowan Hale": also "Rowan", "Hale"), titles excluded."""
+    names = [entry.name, *entry.aliases]
+    if entry.kind == "character":
+        names += [
+            word
+            for word in re.findall(r"[\w'’-]+", entry.name)
+            if len(word) >= 3 and word[0].isupper() and word.lower() not in _TITLES
+        ]
+    return list(dict.fromkeys(names))
+
+
 def render(entries: list[CompendiumEntry]) -> str:
     """Compact prompt lines: ``- Rudeus (character, male; also Rudy): his notes``."""
     if not entries:

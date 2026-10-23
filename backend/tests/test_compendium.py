@@ -165,3 +165,15 @@ def test_joined_names_are_split_and_repeated_notes_skipped():
     assert (sylphie.name, sylphie.aliases) == ("Sylphie", ["Sylphiette"])
     assert sylphie.notes == "Rudy's fiancée, shy. Rudy's fiancée, shy and caring."  # "caring" new
     assert c.merge([e("Sylphie", notes="Shy, Rudy's fiancée.")], text) == []
+
+
+def test_a_character_is_followed_by_each_part_of_the_name_but_not_by_titles():
+    from app.knowledge.compendium import mention_names
+
+    assert mention_names(e("Captain Rowan Hale", aliases=["the captain"])) == [
+        "Captain Rowan Hale",
+        "the captain",
+        "Rowan",
+        "Hale",
+    ]
+    assert mention_names(e("Asura Kingdom", kind="place")) == ["Asura Kingdom"]
