@@ -248,3 +248,21 @@ def test_progress_shows_the_queue_of_the_book(client, sample_epub):
         while ws.receive_json()["event"] != "job_complete":
             pass
     assert client.get(f"/api/books/{first}/progress").json()["queue"] is None
+
+
+def test_waiting_books_can_be_reordered_while_the_queue_runs(client, sample_epub, monkeypatch):
+    _slow(monkeypatch)
+    provider_id, (a, b, c, d) = _setup(client, sample_epub, books=4)
+    client.post("/api/queue", json={"book_ids": [a, b, c, d], "provider_id": provider_id})
+    queue = _wait(client, lambda q: q["items"][0]["status"] == "running")
+    batch = queue["items"][0]["batch_id"]
+    ids = {i["book_id"]: i["id"] for i in queue["items"]}
+
+    bad = client.put(f"/api/queue/{batch}/order", json={"item_ids": [ids[a], ids[b]]})
+    assert bad.status_code == 400  # the running book cannot move, all waiting ones must be listed
+    order = [ids[d], ids[b], ids[c]]
+    assert client.put(f"/api/queue/{batch}/order", json={"item_ids": order}).status_code == 200
+
+    queue = _wait(client, lambda q: not q["running"])
+    assert [i["book_id"] for i in queue["items"]] == [a, d, b, c]
+    assert {i["status"] for i in queue["items"]} == {"done"}

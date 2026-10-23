@@ -5,6 +5,7 @@ import { api, type Book } from "../lib/api";
 import { buttonClass } from "../lib/styles";
 import { cn } from "../lib/utils";
 import { CostEstimate } from "../components/CostEstimate";
+import { MoveButtons } from "../components/controls";
 import { QueueDialog } from "../components/QueueDialog";
 import { Button, Card, Page } from "../components/ui";
 
@@ -44,6 +45,13 @@ export function UploadPage() {
     setErrors(problems);
     setUploaded(books);
   }, []);
+
+  const move = (index: number, by: number) =>
+    setUploaded((books) => {
+      const next = [...books];
+      next.splice(index + by, 0, ...next.splice(index, 1));
+      return next;
+    });
 
   const reset = () => {
     setUploaded([]);
@@ -90,7 +98,7 @@ export function UploadPage() {
       <Page
         eyebrow={`${uploaded.length} books uploaded`}
         title="Ready to translate"
-        description="Queue them to translate one after another with the same settings, or open each one."
+        description="Put them in the order you want, then queue them with the same settings, or open each one."
         actions={
           <>
             <Button onClick={reset}>Upload more</Button>
@@ -107,6 +115,11 @@ export function UploadPage() {
             return (
               <li key={book.id}>
                 <Card className="flex items-center gap-4 p-5">
+                  <MoveButtons
+                    label={bookName(book)}
+                    onUp={n > 0 ? () => move(n, -1) : undefined}
+                    onDown={n < uploaded.length - 1 ? () => move(n, 1) : undefined}
+                  />
                   <span className="w-5 text-right font-serif text-faint">{n + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-serif text-xl font-medium">{bookName(book)}</div>

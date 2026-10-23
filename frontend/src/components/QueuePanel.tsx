@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Loader2, Pause, Play, Plus, X } from "lucide-react";
 import { api, QUEUE_PILL, type Book, type QueueItem, type QueueState } from "../lib/api";
-import { Checkbox } from "./controls";
+import { Checkbox, MoveButtons } from "./controls";
 import { Button, Card, Heading, StatusPill } from "./ui";
 
 const bookName = (filename: string) => filename.replace(/\.(epub|pdf)$/i, "");
@@ -148,6 +148,15 @@ export function QueuePanel({
       {groups.map((group) => {
         const [first] = group;
         const open = group.some((i) => i.status !== "done" && i.status !== "failed");
+        // only waiting books move; they take each other's places
+        const waiting = group.filter((i) => i.status === "pending" || i.status === "paused");
+        const move = (item: QueueItem, by: number) => {
+          const ids = waiting.map((i) => i.id);
+          const from = ids.indexOf(item.id);
+          ids.splice(from, 1);
+          ids.splice(from + by, 0, item.id);
+          act(api.reorderBatch(item.batch_id ?? 0, ids));
+        };
         const carries = [first.keep_glossary && "keeps glossary", first.keep_compendium && "keeps compendium"]
           .filter(Boolean)
           .join(" · ");
@@ -167,6 +176,15 @@ export function QueuePanel({
             <ol className="m-0 flex list-none flex-col divide-y divide-line p-0 px-3">
               {group.map((item, n) => (
                 <li key={item.id} className="flex items-center gap-3 py-2.5">
+                  {waiting.length > 1 && item.batch_id !== null && waiting.includes(item) ? (
+                    <MoveButtons
+                      label={item.filename}
+                      onUp={waiting.indexOf(item) > 0 ? () => move(item, -1) : undefined}
+                      onDown={waiting.indexOf(item) < waiting.length - 1 ? () => move(item, 1) : undefined}
+                    />
+                  ) : (
+                    <span className="w-5.5 shrink-0" aria-hidden="true" />
+                  )}
                   <span className="w-5 shrink-0 text-right font-serif text-faint">{n + 1}</span>
                   <div className="min-w-0 flex-1">
                     <Link to={`/translate/${item.book_id}`} className="block truncate text-sm font-medium text-ink">
