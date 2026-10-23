@@ -102,3 +102,25 @@ def test_do_not_translate_terms_are_shown_as_themselves():
     )
     assert text == "- Kirito → Kirito (keep exactly as written)"
     assert "[" not in text  # no marker the model could copy into the translation
+
+
+async def test_features_can_turn_off_analysis_glossary_and_compendium(llm, sample_epub):
+    from app.agents.pipeline import Features
+    from app.core.fake_llm import _extract_source_text, meow_transform
+    from app.models.schemas import AnalysisResult, CompendiumEntry, GlossaryItem
+
+    llm.handlers[TranslationResult] = lambda prompt, n: TranslationResult(
+        translated_text=meow_transform(_extract_source_text(prompt)),
+        new_terms=[GlossaryItem(source_term="Mara", target_term="Marta")],
+        compendium_updates=[CompendiumEntry(name="Mara", gender="female")],
+    )
+    off = Features(**{name: False for name in Features.__dataclass_fields__})
+    pipeline = TranslationPipeline(llm=llm, enable_review=False, features=off)
+    pipeline.set_glossary([GlossaryItem(source_term="lighthouse", target_term="faro")])
+    events = await translate(sample_epub, pipeline)
+
+    assert llm.calls_for(AnalysisResult) == []
+    assert not any("faro" in p for p in llm.calls_for(TranslationResult))  # not used
+    assert len(pipeline.glossary) == 1 and len(pipeline.compendium) == 0  # nothing learned
+    saved = [t for e in events if e.event_type == "chapter_saved" for t in e.data["translations"]]
+    assert any("lighthouse" in t for t in saved) and not any("faro" in t for t in saved)

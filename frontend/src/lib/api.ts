@@ -316,8 +316,20 @@ export interface BookProgress {
   queue: { batch_id: number; items: QueueItem[] } | null;
 }
 
+/** A run's feature switches (RunConfig), all on by default. */
+export const FEATURES = [
+  { key: "analysis", label: "Opening analysis", hint: "Summary, first terms and characters" },
+  { key: "use_glossary", label: "Use the glossary", hint: "Its terms in every prompt" },
+  { key: "learn_glossary", label: "Learn new terms", hint: "Names and terms the model finds" },
+  { key: "enforce_glossary", label: "Enforce the glossary", hint: "Replace terms left untranslated" },
+  { key: "use_compendium", label: "Use the compendium", hint: "Genders and notes in every prompt" },
+  { key: "learn_compendium", label: "Learn characters", hint: "New characters, genders, aliases" },
+  { key: "doubt_review", label: "Doubt review", hint: "Revisit the guesses at the end of the book" },
+] as const;
+export type Features = Record<(typeof FEATURES)[number]["key"], boolean>;
+
 /** A run's settings, as the server stores them (snake_case). */
-export interface RunConfig {
+export interface RunConfig extends Partial<Features> {
   provider_id: number;
   model?: string | null;
   review_model?: string | null;

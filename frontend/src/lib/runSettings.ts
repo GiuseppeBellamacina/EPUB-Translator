@@ -1,4 +1,4 @@
-import type { Provider, RunConfig } from "./api";
+import { FEATURES, type Features, type Provider, type RunConfig } from "./api";
 
 export const LANGUAGES = [
   "english", "italian", "spanish", "french", "german", "portuguese", "dutch",
@@ -23,6 +23,7 @@ export interface RunSettings {
   sourceLang: string;
   targetLang: string;
   style: string;
+  features: Features;
 }
 
 /** Settings from a stored run config, else defaults (first provider, the book's languages). */
@@ -40,6 +41,7 @@ export function settingsFrom(
     sourceLang: languageName(known?.source_language ?? languages.source, "english"),
     targetLang: languageName(known?.target_language ?? languages.target, "italian"),
     style: known?.style_instructions ?? "",
+    features: Object.fromEntries(FEATURES.map(({ key }) => [key, known?.[key] ?? true])) as Features,
   };
 }
 
@@ -53,5 +55,6 @@ export function toRunConfig(s: RunSettings): RunConfig {
     source_language: s.sourceLang || null, // "": each book's own
     target_language: s.targetLang,
     style_instructions: s.style,
+    ...s.features,
   };
 }

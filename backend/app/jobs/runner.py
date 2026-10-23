@@ -4,11 +4,12 @@ persists the checkpoints and publishes the messages."""
 import copy
 import time
 from collections.abc import Callable
+from dataclasses import fields
 from pathlib import Path
 
 from langchain_core.rate_limiters import InMemoryRateLimiter
 
-from app.agents.pipeline import TranslationPipeline
+from app.agents.pipeline import Features, TranslationPipeline
 from app.core.config import settings
 from app.core.encryption import decrypt_api_key
 from app.core.llm_factory import LLMConfig, create_llm
@@ -118,6 +119,8 @@ class JobRunner:
                 max_retries=1,
                 style_instructions=config.style_instructions,
                 enable_review=config.enable_review,
+                doubt_review=config.doubt_review,
+                features=Features(**config.model_dump(include={f.name for f in fields(Features)})),
                 review_llm=review_llm,
                 glossaries=glossaries,
                 compendiums=compendiums,

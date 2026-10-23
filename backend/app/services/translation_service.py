@@ -109,7 +109,7 @@ async def translate_document(
     # Phase 1: analysis
     if analysis:
         pipeline.book_summary = analysis.get("summary", "")
-    else:
+    elif pipeline.features.analysis:
         text = analysis_text(doc)
         if text:
             try:
@@ -370,6 +370,7 @@ async def translate_document(
             message=f"Reviewing {len(pending)} passage(s) translated with doubts",
         )
         touched: set[int] = set()
+        f = pipeline.features
 
         async def review(unit: int, block: int, queue: Queue) -> None:
             source = unit_blocks(unit)[block].text
@@ -382,8 +383,12 @@ async def translate_document(
                         original_text=source,
                         translated_text=current,
                         doubts=sorted(set(doubts[(unit, block)])),
-                        glossary=pipeline.glossary.relevant(source, before),
-                        compendium=pipeline.compendium.relevant(source, before),
+                        glossary=(
+                            pipeline.glossary.relevant(source, before) if f.use_glossary else []
+                        ),
+                        compendium=(
+                            pipeline.compendium.relevant(source, before) if f.use_compendium else []
+                        ),
                         source_language=pipeline.source_language,
                         target_language=pipeline.target_language,
                         style_instructions=pipeline.style_instructions,
@@ -403,7 +408,7 @@ async def translate_document(
             if resolution.translation and resolution.translation.strip() != current:
                 text = keep_unfinished(source, " ".join(split_paragraphs(resolution.translation)))
                 if sorted(_PLACEHOLDER.findall(text)) == sorted(_PLACEHOLDER.findall(source)):
-                    glossary = pipeline.glossary.relevant(source)
+                    glossary = pipeline.glossary.relevant(source) if f.enforce_glossary else []
                     fixed = pipeline.glossary.enforce(text, glossary)
                 else:
                     note = "Kept: the correction lost inline markup. " + note
