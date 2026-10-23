@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Translatio** translates EPUB and PDF books with LLMs, keeping format and layout (the repo and the app were called EPUB Translator; the DB file `epub_translator.db`, the default encryption key and the theme storage key keep the old name so existing data stays readable). The README has the user-facing overview and `docs/translation-graph.svg` the chapter graph.
+**Translatio** translates EPUB and PDF books with LLMs, keeping format and layout. The README has the user-facing overview and `docs/translation-graph.svg` the chapter graph.
 
 ## Commands
 
@@ -16,6 +16,8 @@ $DC run --rm backend uv add <pkg>                 # add a dependency (updates py
 $DC run --rm frontend bun run lint                # frontend lint
 ```
 
+The compose project is named `translatio` (top of `docker-compose.yml`): containers `translatio-backend-1`/`translatio-frontend-1`, network `translatio_default`, whatever the checkout folder is called. Environment variables use the `TRANSLATIO_` prefix.
+
 `./format.ps1` runs isort → black → ruff `--fix` and eslint + tsc inside the containers. Line length is 100 for all Python tools.
 
 Production: `docker compose up --build` (backend `prod` target, nginx frontend).
@@ -28,13 +30,13 @@ $DC run --rm --no-deps backend pytest tests/test_pipeline.py::test_name # single
 $DC run --rm --no-deps backend pytest -m live                           # real-provider smoke tests (cost quota)
 ```
 
-`tests/conftest.py` points `EPUB_DATA_DIR` to a temp dir before importing `app`, and provides `ScriptedLLM` (a `FakeChatModel` with per-schema `handlers`, `fail` error injection, `calls_for(schema)` and concurrency `peak`), a `sample_epub` fixture and a `db` fixture that recreates the schema. In the running app, a provider of type `fake` (`app/core/fake_llm.py`) gives deterministic "BAU … MIAO" translations without any API.
+`tests/conftest.py` points `TRANSLATIO_DATA_DIR` to a temp dir before importing `app`, and provides `ScriptedLLM` (a `FakeChatModel` with per-schema `handlers`, `fail` error injection, `calls_for(schema)` and concurrency `peak`), a `sample_epub` fixture and a `db` fixture that recreates the schema. In the running app, a provider of type `fake` (`app/core/fake_llm.py`) gives deterministic "BAU … MIAO" translations without any API.
 
 ## Configuration
 
-Settings live in `app/core/config.py` (pydantic-settings, env prefix `EPUB_`). `EPUB_ENCRYPTION_KEY` encrypts provider API keys stored in SQLite. There is a single data directory: the repo-root `data/`, mounted at `/data` (`EPUB_DATA_DIR`); uploads, translated output and the DB all derive from it. Never mount anything under `/app` in compose besides the source itself, or Docker recreates host directories inside `backend/`.
+Settings live in `app/core/config.py` (pydantic-settings, env prefix `TRANSLATIO_`). `TRANSLATIO_ENCRYPTION_KEY` encrypts provider API keys stored in SQLite. There is a single data directory: the repo-root `data/`, mounted at `/data` (`TRANSLATIO_DATA_DIR`); uploads, translated output and the DB all derive from it. Never mount anything under `/app` in compose besides the source itself, or Docker recreates host directories inside `backend/`.
 
-Provider bootstrap (`app/core/bootstrap.py`, run on startup): API keys come from the repo-root `.env`, mounted as a file at `EPUB_ENV_FILE` (not via compose `env_file`, since names like `OPENAI-API-KEY` are not valid env vars; names are normalized). `config.yaml` (mounted at `/config/config.yaml`) declares providers upserted by name; one whose `api_key_env` is missing is skipped. The dev providers are `OpenRouter` (use `:free` models for dev runs; heavily rate-limited), `OpenAI` (paid — use cheap models such as `gpt-4.1-nano` sparingly) and `fake`; they have no default model. A config entry renamed in `config.yaml` keeps its row (matched by type and endpoint); config rows no longer listed are deactivated, not deleted. `ProviderConfig.source` is `config` for bootstrapped rows and `user` for rows created or edited via the API (`POST`/`PUT /api/providers`); bootstrap never takes over a `user` row with the same name (editing a config provider in the UI therefore detaches it from `config.yaml`). Tests point both files to nonexistent paths.
+Provider bootstrap (`app/core/bootstrap.py`, run on startup): API keys come from the repo-root `.env`, mounted as a file at `TRANSLATIO_ENV_FILE` (not via compose `env_file`, since names like `OPENAI-API-KEY` are not valid env vars; names are normalized). `config.yaml` (mounted at `/config/config.yaml`) declares providers upserted by name; one whose `api_key_env` is missing is skipped. The dev providers are `OpenRouter` (use `:free` models for dev runs; heavily rate-limited), `OpenAI` (paid — use cheap models such as `gpt-4.1-nano` sparingly) and `fake`; they have no default model. A config entry renamed in `config.yaml` keeps its row (matched by type and endpoint); config rows no longer listed are deactivated, not deleted. `ProviderConfig.source` is `config` for bootstrapped rows and `user` for rows created or edited via the API (`POST`/`PUT /api/providers`); bootstrap never takes over a `user` row with the same name (editing a config provider in the UI therefore detaches it from `config.yaml`). Tests point both files to nonexistent paths.
 
 ## Architecture
 
@@ -78,7 +80,7 @@ Progress events are forwarded to the client as `{"event": event_type, chapter_in
 - **Primitives**: `components/ui.tsx` (`Button`, `Card`, `Page`, `Heading`, `StatusPill`) and `lib/styles.ts` (`buttonClass`, `inputClass`; non-component exports live outside `.tsx` because of react-refresh).
 - **Run settings**: `RunSettingsFields` (+ `lib/runSettings.ts`) is the shared form of the translate page and the queue dialog; controls (`Toggle`, `Checkbox`, `Select`) are in `components/controls.tsx`. The Library page selects books into the queue (`QueueDialog`) and shows it (`QueuePanel`).
 - **Model and provider pickers**: `ModelCombobox` and `ProviderSelect` (Headless UI). `ProviderLogo` (brand marks from `@lobehub/icons-static-svg`, picked from provider type, OpenRouter URL or `vendor/model` prefix).
-- **Visual checks**: Chrome automation may be unavailable. Instead, take screenshots with Playwright in Docker (`mcr.microsoft.com/playwright`) on the `epub_translator_default` network, using the frontend container's IP (the Vite dev server only accepts localhost/IP hosts). Book statuses: `uploaded`, `translating`, `paused` (resumable), `completed`, `failed` (finished with incomplete units or crashed; also resumable).
+- **Visual checks**: Chrome automation may be unavailable. Instead, take screenshots with Playwright in Docker (`mcr.microsoft.com/playwright`) on the `translatio_default` network, using the frontend container's IP (the Vite dev server only accepts localhost/IP hosts). Book statuses: `uploaded`, `translating`, `paused` (resumable), `completed`, `failed` (finished with incomplete units or crashed; also resumable).
 
 New DB columns are added automatically by `init_db` (`ALTER TABLE ADD COLUMN` for missing nullable columns); anything more complex needs a real migration.
 
@@ -92,7 +94,7 @@ Defaults live in `Settings`, `config.yaml` `translation:` overrides them at star
 **REST** (`app/api/routes.py`, mounted at `/api`): providers CRUD (incl. `PUT`), book upload/list/delete/download/preview/estimate/progress, glossary editing, queue (`/queue`: list, add, start, stop, remove, clear finished). `GET /books/{id}/progress` returns the run state (completed/failed/in-flight units, ETA) plus `recent_events`, an in-memory ring buffer (200, newest first) of the WS messages kept in `services/job_runner.py`, so a reload still shows the recent log; every WS message carries a server `ts`. Frontend calls go through `src/lib/api.ts`.
 
 **Cost estimates** (`GET /api/books/{id}/estimate`, shown on the upload page by `components/CostEstimate.tsx`):
-- **Prices** (`services/pricing.py`): OpenAI and Anthropic chat-model prices come from LiteLLM's public price list. They are cached in `data/pricing_cache.json` for `pricing_refresh_hours`; if the download fails, the stale cache is used, then `app/data/pricing_fallback.json`. Refresh that bundled snapshot with `scripts/snapshot_prices.py`. Tests run offline: `EPUB_PRICING_URL=""` selects the snapshot.
+- **Prices** (`services/pricing.py`): OpenAI and Anthropic chat-model prices come from LiteLLM's public price list. They are cached in `data/pricing_cache.json` for `pricing_refresh_hours`; if the download fails, the stale cache is used, then `app/data/pricing_fallback.json`. Refresh that bundled snapshot with `scripts/snapshot_prices.py`. Tests run offline: `TRANSLATIO_PRICING_URL=""` selects the snapshot.
 - **Token profile** (`services/cost_estimator.py`): `profile_document` walks the book's real chunks. It reuses `translation_service.analysis_text`/`lead_context_for`, so it counts what the pipeline actually sends. The profile is cached in `Book.token_profile`.
 - **Prompt sizes**: `usage` measures the real prompt templates. Approximations (target-language expansion, rejection rate, Claude tokenizer factor, thinking tokens) are module constants.
 - **Model rules** (`llm_factory`): `thinks_by_default` and `accepts_temperature` decide which models are billed for thinking (OpenAI reasoning models, Claude ≥ 5) and which get `temperature` (Claude Opus 4.7+ / 5.x reject it with a 400).

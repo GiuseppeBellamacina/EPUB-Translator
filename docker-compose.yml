@@ -1,3 +1,5 @@
+name: translatio  # fixed project name: containers, network and volumes are translatio-*
+
 services:
   backend:
     build:
@@ -11,8 +13,8 @@ services:
       # Mounted as a file (not env_file) because keys like OPENAI-API-KEY are not valid env names
       - ./.env:/run/secrets/app.env:ro
     environment:
-      - EPUB_ENV_FILE=/run/secrets/app.env
-      - EPUB_ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-secret}
+      - TRANSLATIO_ENV_FILE=/run/secrets/app.env
+      - TRANSLATIO_ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-secret}
     extra_hosts:
       # Ollama (or other local servers) on the host; built in on Docker Desktop, needed on Linux
       - "host.docker.internal:host-gateway"

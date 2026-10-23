@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 
 export type Theme = "light" | "dark";
 
-const STORAGE_KEY = "epub-translator-theme";
+const STORAGE_KEY = "translatio-theme";
 
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") return "light";

@@ -1,6 +1,6 @@
 """Provider bootstrap — create/update LLM providers from API keys and config.yaml on startup.
 
-Keys come from the mounted .env file (``EPUB_ENV_FILE``) and the process environment.
+Keys come from the mounted .env file (``TRANSLATIO_ENV_FILE``) and the process environment.
 Names are normalized, so ``OPENAI-API-KEY`` and ``OPENAI_API_KEY`` are equivalent.
 
 ``config.yaml`` ``providers:`` entries are upserted by name; an entry whose
