@@ -134,6 +134,8 @@ class QueueItem(Base):
     # start from the glossary of the book translated just before it in the queue
     keep_glossary = Column(Boolean, default=False)
     keep_compendium = Column(Boolean, default=False)  # same, for the compendium
+    # the queue (batch) the book was added to: id of its first item; carry-over stays inside it
+    batch_id = Column(Integer, nullable=True)
     status = Column(String(20), default="pending")  # pending, running, paused, done, failed
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -122,6 +122,12 @@ export const api = {
         keep_compendium: keep.compendium,
       }),
     }),
+  /** Add books to the end of an existing queue (its settings, carry-over continues). */
+  addToBatch: (batchId: number, bookIds: number[]) =>
+    request<{ queued: number }>(`/queue/${batchId}/books`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
   startQueue: () => request("/queue/start", { method: "POST" }),
   stopQueue: () => request("/queue/stop", { method: "POST" }),
   removeFromQueue: (itemId: number) => request(`/queue/${itemId}`, { method: "DELETE" }),
@@ -294,6 +300,8 @@ export interface QueueItem {
   error: string | null;
   keep_glossary: boolean;
   keep_compendium: boolean;
+  /** the queue the book was added to (books of one queue carry glossary/compendium) */
+  batch_id: number | null;
   config: RunConfig;
   completed_units: number;
   total_units: number;
