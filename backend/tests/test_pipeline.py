@@ -124,3 +124,32 @@ async def test_features_can_turn_off_analysis_glossary_and_compendium(llm, sampl
     assert len(pipeline.glossary) == 1 and len(pipeline.compendium) == 0  # nothing learned
     saved = [t for e in events if e.event_type == "chapter_saved" for t in e.data["translations"]]
     assert any("lighthouse" in t for t in saved) and not any("faro" in t for t in saved)
+
+
+def test_aligned_catches_a_paragraph_moved_onto_a_short_block():
+    from app.agents.translator_agent import aligned
+
+    sources = ["Page | 21", "I could feel my brain tingling as I listened to her voice. " * 3]
+    assert aligned(sources, ["Pagina | 21", "Sentivo il cervello formicolare. " * 4])
+    assert not aligned(sources, ["Sentivo il cervello formicolare. " * 4, "Era piacevole."])
+    assert not aligned(sources, ["Pagina | 21"])
+
+
+async def test_misaligned_chunk_output_falls_back_to_blocks(llm):
+    from app.agents.translator_agent import translate_blocks
+
+    header, paragraph = (
+        "Page | 21",
+        "I could feel my brain tingling as I listened to her voice. " * 3,
+    )
+    llm.handlers[TranslationResult] = lambda prompt, n: TranslationResult(
+        translated_text=(
+            f"{paragraph}\n\nIt was pleasant." if n == 1 else f"T: {prompt.rsplit(':', 1)[-1]}"
+        )
+    )
+    kwargs = dict(
+        context="", chapter_summary="", glossary=[], source_language="en", target_language="it"
+    )
+    out, *_ = await translate_blocks(llm, [header, paragraph], attempts=1, **kwargs)
+    assert len(llm.calls_for(TranslationResult)) == 3  # the chunk, then each block
+    assert len(out[0]) < 40  # the header keeps a header-sized translation

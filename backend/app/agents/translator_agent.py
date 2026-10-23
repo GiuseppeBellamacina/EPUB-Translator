@@ -37,8 +37,10 @@ you used; source_term must be copied exactly as it appears in the text. Omit com
 page): stop your translation at the same point, without completing the sentence or adding \
 closing quotation marks or punctuation
 9. Use the COMPENDIUM: give each character the listed gender in every agreement (articles, \
-adjectives, participles, pronouns) and follow its notes. When a character's gender is unknown \
-and the passage does not reveal it, prefer wording that does not commit to a gender
+adjectives, participles, pronouns) and follow its notes. This includes what characters say \
+about themselves in the first person: work out who speaks each line (usually named around it) \
+and agree with that speaker's gender. When a character's gender is unknown and the passage \
+does not reveal it, prefer wording that does not commit to a gender
 10. Report in compendium_updates what THIS passage reveals that the COMPENDIUM lacks: new \
 characters (with their gender when pronouns, titles or descriptions make it clear), places \
 and other recurring elements, new aliases, and short notes useful to translate them \
@@ -172,6 +174,23 @@ def split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
 
+def aligned(sources: list[str], translations: list[str]) -> bool:
+    """One translation per block, each of a plausible length for its block.
+
+    A model may drop a short block (a page header) and split another paragraph in two:
+    the count still matches, but the translations land on the wrong blocks. The bounds
+    are loose (5x either way: CJK ↔ Latin scripts) and still catch a paragraph moved
+    onto a one-line header.
+    """
+    if len(sources) != len(translations):
+        return False
+    for source, translation in zip(sources, translations):
+        s, t = len(source.strip()), len(translation.strip())
+        if t > 5 * s + 40 or t < s / 5 - 20:
+            return False
+    return True
+
+
 def keep_unfinished(source: str, translation: str) -> str:
     """Drop a closing quote the model added to a quote left open in the source.
 
@@ -212,7 +231,7 @@ async def translate_blocks(
         except Exception:
             break
         paragraphs = split_paragraphs(result.translated_text)
-        if len(paragraphs) == len(blocks):
+        if aligned(blocks, paragraphs):
             translations = [keep_unfinished(s, t) for s, t in zip(blocks, paragraphs)]
             return translations, result.new_terms, result.compendium_updates, result.doubts
 
