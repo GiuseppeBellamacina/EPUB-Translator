@@ -73,6 +73,13 @@ class AnalysisResult(BaseModel):
     )
 
 
+class Doubt(BaseModel):
+    quote: str = Field(description="The few SOURCE words you are unsure about, copied exactly")
+    reason: str = Field(
+        description="Why: gender not known yet, ambiguous reference, unknown term, wordplay..."
+    )
+
+
 class TranslationResult(BaseModel):
     translated_text: str = Field(
         description="The translated text, preserving paragraph breaks (\\n\\n) of the source"
@@ -87,6 +94,23 @@ class TranslationResult(BaseModel):
         "the COMPENDIUM, or whose gender, aliases or notes this passage reveals; only facts "
         "stated or clearly implied by the text",
     )
+    doubts: list[Doubt] = Field(
+        default_factory=list,
+        description="At most 3 places where you had to guess (a gender the text has not "
+        "revealed yet, who a pronoun refers to, an unknown term, wordplay); they are revisited "
+        "at the end of the book. Leave empty when sure",
+    )
+
+
+class DoubtResolution(BaseModel):
+    """The end-of-book decision on a passage translated with doubts."""
+
+    translation: str | None = Field(
+        default=None,
+        description="The corrected translation of the passage, as one paragraph, keeping "
+        "inline placeholders like <1>...</1>; null when the current translation is right",
+    )
+    note: str = Field(default="", description="One short sentence: what was decided and why")
 
 
 class ReviewIssue(BaseModel):

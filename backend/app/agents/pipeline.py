@@ -40,8 +40,10 @@ from app.agents.analyzer import analyze_context
 from app.agents.reviewer import review_translation
 from app.agents.translator_agent import split_paragraphs, translate_blocks
 from app.knowledge.store import CompendiumStore, GlossaryStore
-from app.models.schemas import AnalysisResult, CompendiumEntry, GlossaryItem
+from app.models.schemas import AnalysisResult, CompendiumEntry, Doubt, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker, TextBlock
+
+MAX_DOUBTS = 3  # per chunk: the final review stays short
 
 
 @dataclass
@@ -86,6 +88,7 @@ class ChapterState(BaseModel):
     current_blocks: list[str] = Field(default_factory=list)  # one translation per chunk block
     current_new_terms: list[GlossaryItem] = Field(default_factory=list)
     current_compendium: list[CompendiumEntry] = Field(default_factory=list)
+    current_doubts: list[Doubt] = Field(default_factory=list)
     feedback: str = ""  # reviewer issues for the retranslation
     should_retry: bool = False
     translation_failed: bool = False
@@ -102,6 +105,31 @@ class ChapterState(BaseModel):
     @property
     def current_translation(self) -> str:
         return "\n\n".join(self.current_blocks)
+
+
+def _placed_doubts(state: ChapterState) -> list[dict]:
+    """The accepted translation's doubts, each on the block (of the chapter) that quotes it.
+
+    Quotes not found in the chunk are dropped (invented by the model); at most
+    ``MAX_DOUBTS`` per chunk.
+    """
+    chunk, offset = state.chunks[state.chunk_index], state.offsets[state.chunk_index]
+    placed = []
+    for doubt in state.current_doubts:
+        quote = " ".join(doubt.quote.lower().split())
+        for i, block in enumerate(chunk.blocks):
+            if quote and quote in " ".join(block.text.lower().split()):
+                placed.append(
+                    {
+                        "block": offset + i,
+                        "quote": doubt.quote.strip(),
+                        "reason": doubt.reason.strip(),
+                        "source": block.text,
+                        "translation": state.current_blocks[i],
+                    }
+                )
+                break
+    return placed[:MAX_DOUBTS]
 
 
 def _following(state: ChapterState) -> str:
@@ -138,7 +166,7 @@ def build_chapter_graph(
         chunk = state.chunks[state.chunk_index]
         total = len(state.chunks)
         try:
-            translations, new_terms, compendium_updates = await translate_blocks(
+            translations, new_terms, compendium_updates, doubts = await translate_blocks(
                 llm,
                 [b.text for b in chunk.blocks],
                 context=_previous(state),
@@ -160,7 +188,12 @@ def build_chapter_graph(
                     "message": f"Translation error on chunk {state.chunk_index + 1}: {e}",
                 }
             )
-            return {"current_blocks": [], "current_new_terms": [], "translation_failed": True}
+            return {
+                "current_blocks": [],
+                "current_new_terms": [],
+                "current_doubts": [],
+                "translation_failed": True,
+            }
 
         writer(
             {
@@ -176,6 +209,7 @@ def build_chapter_graph(
             "current_blocks": translations,
             "current_new_terms": new_terms,
             "current_compendium": compendium_updates,
+            "current_doubts": doubts,
             "translation_failed": False,
         }
 
@@ -264,17 +298,33 @@ def build_chapter_graph(
                 }
             )
         # names may only occur in the text before the chunk ("she" in this chunk)
+        genders = {e.name: e.gender for e in compendium.entries}  # merged before any await
         changed = await compendiums.learn(
             state.current_compendium, source_text=_previous(state) + "\n" + chunk.text
         )
         if changed:
+            # a male/female flip now (evidence stays on the entry: it is not the signal)
+            corrected = [
+                e.name for e in changed if {genders.get(e.name), e.gender} == {"male", "female"}
+            ]
             writer(
                 {
                     "event_type": "compendium_update",
                     "chunk_index": state.chunk_index,
                     "total_chunks": len(state.chunks),
                     "message": "Compendium: " + ", ".join(e.name for e in changed),
-                    "data": {"entries": [e.model_dump() for e in changed]},
+                    "data": {"entries": [e.model_dump() for e in changed], "corrected": corrected},
+                }
+            )
+        doubts = _placed_doubts(state)
+        if doubts:
+            writer(
+                {
+                    "event_type": "doubt_flagged",
+                    "chunk_index": state.chunk_index,
+                    "total_chunks": len(state.chunks),
+                    "message": f"{len(doubts)} doubt(s) bookmarked for the final review",
+                    "data": {"doubts": doubts},
                 }
             )
         return {}
@@ -290,6 +340,7 @@ def build_chapter_graph(
             "translation_failed": False,
             "current_new_terms": [],
             "current_compendium": [],
+            "current_doubts": [],
             "current_blocks": [],
         }
 
@@ -380,6 +431,8 @@ class TranslationPipeline:
         enable_review: Run the reviewer on every chunk (doubles the LLM calls)
         review_llm: Model for the review (default: ``llm``). A small model is a poor
             judge of its own output: reviewing with a stronger one pays off.
+        doubt_review: Revisit, at the end of the book, the passages the translator was
+            unsure about (``translate_document``), with the review model
     """
 
     def __init__(
@@ -394,8 +447,11 @@ class TranslationPipeline:
         review_llm: BaseChatModel | None = None,
         glossaries: GlossaryStore | None = None,
         compendiums: CompendiumStore | None = None,
+        doubt_review: bool = True,
     ):
         self.llm = llm
+        self.review_llm = review_llm or llm
+        self.doubt_review = doubt_review
         self.source_language = source_language
         self.target_language = target_language
         self.chunker = chunker or SmartChunker()

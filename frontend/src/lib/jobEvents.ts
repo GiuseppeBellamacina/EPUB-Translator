@@ -116,6 +116,21 @@ export function logEntries(eventsNewestFirst: JobEvent[], unitAbbr: string): Log
         });
         break;
       }
+      case "doubt_flagged": {
+        const doubts = (e.data?.doubts as { quote: string; reason: string }[]) ?? [];
+        const first = doubts[0] ? ` — “${doubts[0].quote}”: ${doubts[0].reason}` : "";
+        out.push({ ...base, kind: "review", unit: at, text: `Doubt bookmarked${first}` });
+        break;
+      }
+      case "doubt_review_start":
+        out.push({ ...base, kind: "review", unit: null, text: e.message ?? "Reviewing the doubts" });
+        break;
+      case "doubt_resolved": {
+        const fixed = e.data?.status === "fixed";
+        const note = e.data?.note ? ` — ${e.data.note}` : "";
+        out.push({ ...base, kind: "review", unit: at, text: `Doubt ${fixed ? "fixed" : "kept"}${note}` });
+        break;
+      }
       case "chunk_accepted":
         out.push({ ...base, kind: "review", unit: at, text: "Accepted after the retry" });
         break;

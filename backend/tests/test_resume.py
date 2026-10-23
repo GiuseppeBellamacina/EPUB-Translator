@@ -57,6 +57,7 @@ async def run_job(book_id, path, llm, restart=False, stop_after=None, concurrenc
         previous=resume.previous,
         completed=resume.completed,
         analysis=resume.analysis,
+        bookmarks=resume.bookmarks,
         max_concurrency=concurrency,
     ):
         await store.handle(event)

@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
 
-from app.models.schemas import AnalysisResult, ReviewResult, TranslationResult
+from app.models.schemas import AnalysisResult, DoubtResolution, ReviewResult, TranslationResult
 
 _TRANSLATE_MARKER = re.compile(r"TRANSLATE the following from .*?:\s*\n\n(.*)$", re.DOTALL)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -87,6 +87,8 @@ class FakeChatModel(BaseChatModel):
                 corrected_text=None,
                 glossary_violations=[],
             )
+        if schema is DoubtResolution:
+            return DoubtResolution(note="Kept: the fake provider has no doubts.")
         # Fallback: best-effort empty instance.
         return schema()  # type: ignore[call-arg]
 

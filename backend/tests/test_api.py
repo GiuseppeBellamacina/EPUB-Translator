@@ -123,13 +123,20 @@ def test_delete_book_removes_rows_and_files(client, sample_epub):
             "select original_path, translated_path from books where id = ?", (book["id"],)
         ).fetchone()
     assert all(Path(p).exists() for p in paths)
+    with sqlite3.connect(settings.db_path) as conn:
+        conn.execute(
+            "insert into bookmarks (book_id, unit, block, quote, reason, status) "
+            "values (?, 0, 0, 'q', 'r', 'open')",
+            (book["id"],),
+        )
+    assert len(client.get(f"/api/books/{book['id']}/bookmarks").json()) == 1
 
     assert client.delete(f"/api/books/{book['id']}").json() == {"status": "deleted"}
     assert client.get(f"/api/books/{book['id']}").status_code == 404
     assert client.get(f"/api/glossary/{book['id']}").json() == []
     assert not any(Path(p).exists() for p in paths)
     with sqlite3.connect(settings.db_path) as conn:
-        for table in ("chapters", "translation_jobs", "queue_items"):
+        for table in ("chapters", "translation_jobs", "queue_items", "bookmarks"):
             assert conn.execute(f"select count(*) from {table}").fetchone() == (0,)
     assert client.delete(f"/api/books/{book['id']}").status_code == 404
 

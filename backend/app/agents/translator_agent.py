@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.llm_factory import structured_chain
 from app.knowledge.compendium import render
-from app.models.schemas import CompendiumEntry, GlossaryItem, TranslationResult
+from app.models.schemas import CompendiumEntry, Doubt, GlossaryItem, TranslationResult
 
 TRANSLATION_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -42,7 +42,12 @@ and the passage does not reveal it, prefer wording that does not commit to a gen
 10. Report in compendium_updates what THIS passage reveals that the COMPENDIUM lacks: new \
 characters (with their gender when pronouns, titles or descriptions make it clear), places \
 and other recurring elements, new aliases, and short notes useful to translate them \
-consistently. Only facts stated or clearly implied by the text; never repeat what is listed. When the passage clearly contradicts a listed gender, report the entry with the right gender and, in evidence, the words of the passage that prove it
+consistently. Only facts stated or clearly implied by the text; never repeat what is listed. \
+When the passage clearly contradicts a listed gender, report the entry with the right gender \
+and, in evidence, the words of the passage that prove it
+11. Report in doubts (at most 3) the places where you had to guess: a gender the text has not \
+revealed yet, who a pronoun refers to, an unknown term, wordplay. They are revisited at the end \
+of the book, when more is known. Never report what you are sure about
 
 {style_instructions}""",
         ),
@@ -182,10 +187,10 @@ def keep_unfinished(source: str, translation: str) -> str:
 
 async def translate_blocks(
     llm: BaseChatModel, blocks: list[str], attempts: int = 2, **kwargs
-) -> tuple[list[str], list[GlossaryItem], list[CompendiumEntry]]:
+) -> tuple[list[str], list[GlossaryItem], list[CompendiumEntry], list[Doubt]]:
     """Translate blocks as one chunk, guaranteeing one translation per block.
 
-    Returns the translations, the new glossary terms and the compendium updates.
+    Returns the translations, the new glossary terms, the compendium updates and the doubts.
     The chunk is retried when the model merges/splits paragraphs; if it still
     does, or a call fails (e.g. a degenerate output hitting the token cap, which
     an identical request would just repeat), each block is translated on its own
@@ -198,6 +203,7 @@ async def translate_blocks(
             [keep_unfinished(blocks[0], translation)],
             result.new_terms,
             result.compendium_updates,
+            result.doubts,
         )
 
     for _ in range(attempts):
@@ -208,17 +214,21 @@ async def translate_blocks(
         paragraphs = split_paragraphs(result.translated_text)
         if len(paragraphs) == len(blocks):
             translations = [keep_unfinished(s, t) for s, t in zip(blocks, paragraphs)]
-            return translations, result.new_terms, result.compendium_updates
+            return translations, result.new_terms, result.compendium_updates, result.doubts
 
     # Per block: each block's following text is the next block
     following = kwargs.pop("following", "")
     translations: list[str] = []
     new_terms: list[GlossaryItem] = []
     updates: list[CompendiumEntry] = []
+    doubts: list[Doubt] = []
     for i, block in enumerate(blocks):
         next_text = blocks[i + 1] if i + 1 < len(blocks) else following
-        single, terms, found = await translate_blocks(llm, [block], following=next_text, **kwargs)
+        single, terms, found, unsure = await translate_blocks(
+            llm, [block], following=next_text, **kwargs
+        )
         translations += single
         new_terms += terms
         updates += found
-    return translations, new_terms, updates
+        doubts += unsure
+    return translations, new_terms, updates, doubts
