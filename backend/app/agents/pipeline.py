@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.analyzer import analyze_context
 from app.agents.reviewer import review_translation
-from app.agents.translator_agent import split_paragraphs, translate_blocks
+from app.agents.translator_agent import aligned, split_paragraphs, translate_blocks
 from app.knowledge.store import CompendiumStore, GlossaryStore
 from app.models.schemas import AnalysisResult, CompendiumEntry, Doubt, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker, TextBlock
@@ -262,7 +262,7 @@ def build_chapter_graph(
         # Not approved: keep the corrected text as the current best, but only if it
         # still has one paragraph per block (otherwise it would break alignment).
         corrected_blocks = split_paragraphs(review.corrected_text or "")
-        if len(corrected_blocks) != len(state.current_blocks):
+        if not aligned([b.text for b in chunk.blocks], corrected_blocks):
             corrected_blocks = state.current_blocks
         corrected = "\n\n".join(corrected_blocks)
         should_retry = state.retries < state.max_retries
@@ -372,8 +372,14 @@ def build_chapter_graph(
             updates["failed_chunks"] = state.failed_chunks + [state.chunk_index]
         else:
             # only the passage's own terms: others would only risk spurious replacements
+            chunk = state.chunks[state.chunk_index]
+            terms = (
+                state.glossary_context
+                if features.use_glossary
+                else glossary.relevant(chunk.text, _previous(state))
+            )
             translations = [
-                glossary.enforce(t, state.glossary_context if features.enforce_glossary else [])
+                glossary.enforce(t, terms if features.enforce_glossary else [])
                 for t in state.current_blocks
             ]
             blocks = list(state.translated_blocks)
