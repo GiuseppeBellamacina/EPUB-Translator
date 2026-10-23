@@ -94,6 +94,9 @@ export const api = {
     request<{ status: string }>(`/translate/${bookId}/stop`, { method: "POST" }),
 
   // Glossary
+  getCompendium: (bookId: number) => request<CompendiumItem[]>(`/compendium/${bookId}`),
+  updateCompendium: (bookId: number, entries: CompendiumItem[]) =>
+    request(`/compendium/${bookId}`, { method: "PUT", body: JSON.stringify({ entries }) }),
   getGlossary: (bookId: number) =>
     request<GlossaryEntry[]>(`/glossary/${bookId}`),
   updateGlossary: (bookId: number, entries: GlossaryEntryCreate[]) =>
@@ -109,10 +112,15 @@ export const api = {
 
   // Queue: books translated one after another on the server
   getQueue: () => request<QueueState>("/queue"),
-  addToQueue: (bookIds: number[], config: RunConfig, keepGlossary: boolean) =>
+  addToQueue: (bookIds: number[], config: RunConfig, keep: { glossary: boolean; compendium: boolean }) =>
     request<{ queued: number }>("/queue", {
       method: "POST",
-      body: JSON.stringify({ ...config, book_ids: bookIds, keep_glossary: keepGlossary }),
+      body: JSON.stringify({
+        ...config,
+        book_ids: bookIds,
+        keep_glossary: keep.glossary,
+        keep_compendium: keep.compendium,
+      }),
     }),
   startQueue: () => request("/queue/start", { method: "POST" }),
   stopQueue: () => request("/queue/stop", { method: "POST" }),
@@ -285,6 +293,7 @@ export interface QueueItem {
   status: "pending" | "running" | "paused" | "done" | "failed";
   error: string | null;
   keep_glossary: boolean;
+  keep_compendium: boolean;
   config: RunConfig;
   completed_units: number;
   total_units: number;
@@ -293,4 +302,19 @@ export interface QueueItem {
 export interface QueueState {
   running: boolean;
   items: QueueItem[];
+}
+
+export const COMPENDIUM_KINDS = ["character", "place", "organization", "item", "other"] as const;
+export const GENDERS = ["male", "female", "unknown", "n/a"] as const;
+
+/** A character, place or other element of a book, as the translation knows it. */
+export interface CompendiumItem {
+  id?: number;
+  name: string;
+  kind: (typeof COMPENDIUM_KINDS)[number];
+  gender: (typeof GENDERS)[number];
+  aliases: string[];
+  notes: string;
+  /** edited by the user: the translation never changes it again */
+  user_edited: boolean;
 }

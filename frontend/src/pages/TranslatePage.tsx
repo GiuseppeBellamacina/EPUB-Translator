@@ -6,6 +6,7 @@ import {
   api,
   type BookDetail,
   type BookProgress,
+  type CompendiumItem,
   type GlossaryEntry,
   type Provider,
 } from "../lib/api";
@@ -16,6 +17,7 @@ import { useRunCost } from "../hooks/useRunCost";
 import { useTranslationWs } from "../hooks/useTranslationWs";
 import { ActivityLog } from "../components/ActivityLog";
 import { CostValue } from "../components/CostEstimate";
+import { CompendiumEditor } from "../components/CompendiumEditor";
 import { GlossaryEditor } from "../components/GlossaryEditor";
 import { LiveView } from "../components/LiveView";
 import { ProgressPanel } from "../components/ProgressPanel";
@@ -30,13 +32,15 @@ export function TranslatePage() {
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
   const [progress, setProgress] = useState<BookProgress | null>(null);
   const [settings, setSettings] = useState<RunSettings>(() => settingsFrom(null, []));
-  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [compendium, setCompendium] = useState<CompendiumItem[]>([]);
+  const [panel, setPanel] = useState<"glossary" | "compendium" | null>(null);
   const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style } = settings;
 
   const refresh = useCallback(() => {
     api.getBook(id).then(setBook);
     api.getProgress(id).then(setProgress);
     api.getGlossary(id).then(setGlossary);
+    api.getCompendium(id).then(setCompendium);
   }, [id]);
 
   const { startTranslation, watchTranslation, stopTranslation, disconnect, isConnected, events, setEvents } =
@@ -44,12 +48,19 @@ export function TranslatePage() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getBook(id), api.getProviders(), api.getGlossary(id), api.getProgress(id)]).then(
-      ([b, p, g, prog]) => {
+    Promise.all([
+      api.getBook(id),
+      api.getProviders(),
+      api.getGlossary(id),
+      api.getProgress(id),
+      api.getCompendium(id),
+    ]).then(
+      ([b, p, g, prog, c]) => {
         if (!active) return;
         setBook(b);
         setProviders(p);
         setGlossary(g);
+        setCompendium(c);
         setProgress(prog);
         setEvents(prog.recent_events); // the recent log survives a page reload
         // The last run's settings, so a running or paused job shows (and resumes with) its own
@@ -71,11 +82,14 @@ export function TranslatePage() {
     return () => clearInterval(timer);
   }, [running, id]);
 
-  // New glossary terms appear in the side panel as they are found
+  // New glossary terms and compendium entries appear in the side panel as they are found
   const latest = events[0];
   useEffect(() => {
     if (latest?.event === "glossary_update" || latest?.event === "analysis_complete") {
       api.getGlossary(id).then(setGlossary);
+    }
+    if (latest?.event === "compendium_update" || latest?.event === "analysis_complete") {
+      api.getCompendium(id).then(setCompendium);
     }
   }, [latest, id]);
 
@@ -171,14 +185,23 @@ export function TranslatePage() {
             disabled={running}
           />
 
-          <div className="flex items-center justify-between rounded-md bg-tint p-3.5">
-            <div>
-              <div className="font-semibold">Glossary</div>
-              <div className="text-[13px] text-muted">{glossary.length} terms</div>
-            </div>
-            <Button size="sm" onClick={() => setGlossaryOpen(true)}>
-              {running ? "View" : "Edit"}
-            </Button>
+          <div className="grid grid-cols-2 gap-3">
+            {(
+              [
+                ["glossary", "Glossary", `${glossary.length} terms`],
+                ["compendium", "Compendium", `${compendium.length} entries`],
+              ] as const
+            ).map(([key, title, count]) => (
+              <div key={key} className="flex flex-col gap-2 rounded-md bg-tint p-3.5">
+                <div>
+                  <div className="font-semibold">{title}</div>
+                  <div className="text-[13px] text-muted">{count}</div>
+                </div>
+                <Button size="sm" onClick={() => setPanel(key)} className="self-start">
+                  {running ? "View" : "Edit"}
+                </Button>
+              </div>
+            ))}
           </div>
 
           {providerId !== null && model && (
@@ -198,26 +221,44 @@ export function TranslatePage() {
         </div>
       </div>
 
-      <Dialog open={glossaryOpen} onClose={() => setGlossaryOpen(false)} className="relative z-50">
+      <Dialog open={panel !== null} onClose={() => setPanel(null)} className="relative z-50">
         <div className="fixed inset-0 bg-ink/35" aria-hidden="true" />
         <div className="fixed inset-0 flex items-start justify-center overflow-auto p-4 pt-16">
-          <DialogPanel className="w-full max-w-2xl rounded-lg bg-surface p-6 shadow-[0_24px_60px_rgba(27,36,51,0.18)]">
+          <DialogPanel className="w-full max-w-3xl rounded-lg bg-surface p-6 shadow-[0_24px_60px_rgba(27,36,51,0.18)]">
             <div className="mb-4 flex items-baseline justify-between gap-3">
-              <DialogTitle className="m-0 font-serif text-[26px] font-medium">Glossary</DialogTitle>
-              <Button size="sm" variant="ghost" onClick={() => setGlossaryOpen(false)}>
+              <DialogTitle className="m-0 font-serif text-[26px] font-medium capitalize">{panel}</DialogTitle>
+              <Button size="sm" variant="ghost" onClick={() => setPanel(null)}>
                 Close
               </Button>
             </div>
-            <p className="mb-4 mt-0 text-sm text-muted">
-              Terms the translation must follow. New recurring names are added automatically while
-              translating; your edits are never overwritten.
-            </p>
-            <GlossaryEditor
-              bookId={id}
-              initial={glossary}
-              disabled={running}
-              onSaved={() => api.getGlossary(id).then(setGlossary)}
-            />
+            {panel === "glossary" ? (
+              <>
+                <p className="mb-4 mt-0 text-sm text-muted">
+                  Terms the translation must follow. New recurring names are added automatically
+                  while translating; your edits are never overwritten.
+                </p>
+                <GlossaryEditor
+                  bookId={id}
+                  initial={glossary}
+                  disabled={running}
+                  onSaved={() => api.getGlossary(id).then(setGlossary)}
+                />
+              </>
+            ) : (
+              <>
+                <p className="mb-4 mt-0 text-sm text-muted">
+                  Who and what the book talks about: the gender of each character drives the
+                  agreements in the translation, notes keep names and voices consistent. Filled in
+                  while translating; entries you edit are never changed.
+                </p>
+                <CompendiumEditor
+                  bookId={id}
+                  initial={compendium}
+                  disabled={running}
+                  onSaved={() => api.getCompendium(id).then(setCompendium)}
+                />
+              </>
+            )}
           </DialogPanel>
         </div>
       </Dialog>

@@ -15,7 +15,7 @@ const DOT: Record<LogKind, string> = {
 const FILTERS: { id: "all" | LogKind; label: string }[] = [
   { id: "all", label: "All" },
   { id: "error", label: "Errors" },
-  { id: "glossary", label: "Glossary" },
+  { id: "glossary", label: "Glossary & notes" },
   { id: "review", label: "Review" },
 ];
 
