@@ -144,3 +144,17 @@ def test_a_do_not_translate_term_with_a_translation_is_translated():
     )
     g = Glossary([flagged, item("Paul", dnt=True)])
     assert [e.do_not_translate for e in g.entries] == [False, True]
+
+
+async def test_the_prompt_limit_is_read_from_the_settings_at_every_chunk(llm, sample_epub):
+    from app.services import app_settings
+
+    app_settings.save(app_settings.AppSettings(max_glossary_terms=1))
+    try:
+        pipeline = TranslationPipeline(llm=llm, enable_review=False)
+        pipeline.set_glossary([item("Mara", dnt=True), item("lighthouse", "faro")])
+        await translate(sample_epub, pipeline)
+        prompts = [p for p in llm.calls_for(TranslationResult) if "Mara" in p and "lighthouse" in p]
+        assert prompts and all(p.count(" → ") == 1 for p in prompts)
+    finally:
+        app_settings.save(app_settings.AppSettings())

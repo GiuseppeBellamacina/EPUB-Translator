@@ -31,7 +31,8 @@ export const api = {
   // Providers
   getProviders: () => request<Provider[]>("/providers"),
   getSettings: () => request<AppSettings>("/settings"),
-  updateSettings: (data: { max_parallel_books: number }) =>
+  /** only the fields sent change */
+  updateSettings: (data: Partial<Omit<AppSettings, "defaults">>) =>
     request<AppSettings>("/settings", { method: "PUT", body: JSON.stringify(data) }),
   createProvider: (data: ProviderCreate) =>
     request<Provider>("/providers", {
@@ -390,6 +391,9 @@ export const QUEUE_PILL: Record<QueueItem["status"], string> = {
 export interface AppSettings {
   /** books translated at the same time */
   max_parallel_books: number;
+  /** entries per prompt, 0 = all the passage mentions */
+  max_glossary_terms: number;
+  max_compendium_entries: number;
   defaults: {
     requests_per_second: number;
     max_concurrency: number;

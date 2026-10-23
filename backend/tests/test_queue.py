@@ -311,3 +311,11 @@ def test_books_on_one_provider_share_its_rate_limiter():
     assert limiter(1, 0.5) is limiter(1, 0.5)
     assert limiter(1, 0.5) is not limiter(2, 0.5)
     assert limiter(1, 0) is None
+
+
+def test_settings_change_only_what_is_sent(client):
+    client.put("/api/settings", json={"max_glossary_terms": 0, "max_compendium_entries": 5})
+    got = client.put("/api/settings", json={"max_parallel_books": 2}).json()
+    assert (got["max_glossary_terms"], got["max_compendium_entries"]) == (0, 5)
+    assert client.put("/api/settings", json={"max_compendium_entries": -1}).status_code == 422
+    client.put("/api/settings", json={"max_parallel_books": 1})

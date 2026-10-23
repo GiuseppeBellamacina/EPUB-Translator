@@ -4,6 +4,7 @@ import { api, type Provider } from "../lib/api";
 import { cn } from "../lib/utils";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { ProviderWizard } from "../components/ProviderWizard";
+import { RetrievalSettings } from "../components/RetrievalSettings";
 import { Button, Card, Page } from "../components/ui";
 
 type Status = { state: "checking" } | { state: "ok"; models: number; free: number } | { state: "error"; message: string };
@@ -144,6 +145,8 @@ export function ProvidersPage() {
           })}
         </ul>
       )}
+
+      <RetrievalSettings />
 
       {(adding || editing) && (
         <ProviderWizard
