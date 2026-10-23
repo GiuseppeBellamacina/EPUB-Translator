@@ -31,3 +31,5 @@ backend/.env
 translated/
 sample_books/
 test.ipynb
+# agent worktrees (local only)
+.claude/worktrees/
