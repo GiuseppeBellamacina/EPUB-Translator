@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Link } from "react-router-dom";
-import { api, type Provider } from "../lib/api";
+import { api, FEATURES, type Provider } from "../lib/api";
 import { LANGUAGES, type RunSettings } from "../lib/runSettings";
 import { inputClass, labelClass } from "../lib/styles";
 import { cn } from "../lib/utils";
@@ -23,7 +23,8 @@ export function RunSettingsFields({
   /** offer "each book's own" as the source language (queue of several books) */
   sourceAuto?: boolean;
 }) {
-  const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style } = value;
+  const { providerId, model, enableReview, reviewModel, sourceLang, targetLang, style, features } = value;
+  const off = FEATURES.filter(({ key }) => !features[key]).length;
   const provider = providers.find((p) => p.id === providerId) ?? null;
   const loadModels = useCallback(
     (refresh: boolean) =>
@@ -129,6 +130,25 @@ export function RunSettingsFields({
           className={cn(inputClass, "resize-none py-2.5 font-normal")}
         />
       </label>
+
+      <details className="group rounded-md border border-line px-3.5 py-2.5">
+        <summary className="cursor-pointer text-sm font-medium marker:text-faint">
+          Features <span className="font-normal text-muted">· {off ? `${off} off` : "all on"}</span>
+        </summary>
+        <div className="mt-3 flex flex-col gap-3">
+          {FEATURES.map(({ key, label, hint }) => (
+            <div key={key} className="flex flex-col gap-0.5">
+              <Toggle
+                checked={features[key]}
+                onChange={(v) => onChange({ features: { ...features, [key]: v } })}
+                label={label}
+                disabled={disabled}
+              />
+              <span className="pl-12 text-xs text-faint">{hint}</span>
+            </div>
+          ))}
+        </div>
+      </details>
     </>
   );
 }

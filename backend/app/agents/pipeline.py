@@ -145,11 +145,24 @@ def _previous(state: ChapterState) -> str:
     return chunk.context_text or (state.lead_context if state.chunk_index == 0 else "")
 
 
+@dataclass(frozen=True)
+class Features:
+    """What a run uses (the ``RunConfig`` switches); everything is on by default."""
+
+    analysis: bool = True  # the opening analysis (summary, first glossary/compendium)
+    use_glossary: bool = True  # glossary terms in the prompts
+    learn_glossary: bool = True  # new terms reported by the model join the glossary
+    enforce_glossary: bool = True  # deterministic replacement of terms left untranslated
+    use_compendium: bool = True
+    learn_compendium: bool = True
+
+
 def build_chapter_graph(
     llm: BaseChatModel,
     glossaries: GlossaryStore,
     compendiums: CompendiumStore,
     review_llm: BaseChatModel | None = None,
+    features: Features = Features(),
 ) -> CompiledStateGraph:
     """Compile the per-chapter graph for a given model and the live knowledge stores."""
     glossary, compendium = glossaries.glossary, compendiums.compendium  # read live
@@ -157,8 +170,10 @@ def build_chapter_graph(
     def context_node(state: ChapterState) -> dict[str, Any]:
         text, before = state.chunks[state.chunk_index].text, _previous(state)
         return {
-            "glossary_context": glossary.relevant(text, before),
-            "compendium_context": compendium.relevant(text, before),
+            "glossary_context": glossary.relevant(text, before) if features.use_glossary else [],
+            "compendium_context": (
+                compendium.relevant(text, before) if features.use_compendium else []
+            ),
         }
 
     async def translate_node(state: ChapterState) -> dict[str, Any]:
@@ -286,7 +301,11 @@ def build_chapter_graph(
         (shared and persisted by the stores)."""
         writer = get_stream_writer()
         chunk = state.chunks[state.chunk_index]
-        accepted = await glossaries.learn(state.current_new_terms, source_text=chunk.text)
+        accepted = (
+            await glossaries.learn(state.current_new_terms, source_text=chunk.text)
+            if features.learn_glossary
+            else []
+        )
         if accepted:
             writer(
                 {
@@ -299,8 +318,12 @@ def build_chapter_graph(
             )
         # names may only occur in the text before the chunk ("she" in this chunk)
         genders = {e.name: e.gender for e in compendium.entries}  # merged before any await
-        changed = await compendiums.learn(
-            state.current_compendium, source_text=_previous(state) + "\n" + chunk.text
+        changed = (
+            await compendiums.learn(
+                state.current_compendium, source_text=_previous(state) + "\n" + chunk.text
+            )
+            if features.learn_compendium
+            else []
         )
         if changed:
             # a male/female flip now (evidence stays on the entry: it is not the signal)
@@ -350,7 +373,8 @@ def build_chapter_graph(
         else:
             # only the passage's own terms: others would only risk spurious replacements
             translations = [
-                glossary.enforce(t, state.glossary_context) for t in state.current_blocks
+                glossary.enforce(t, state.glossary_context if features.enforce_glossary else [])
+                for t in state.current_blocks
             ]
             blocks = list(state.translated_blocks)
             blocks[offset : offset + len(translations)] = translations
@@ -433,6 +457,7 @@ class TranslationPipeline:
             judge of its own output: reviewing with a stronger one pays off.
         doubt_review: Revisit, at the end of the book, the passages the translator was
             unsure about (``translate_document``), with the review model
+        features: What the run uses (analysis, glossary and compendium switches)
     """
 
     def __init__(
@@ -448,10 +473,12 @@ class TranslationPipeline:
         glossaries: GlossaryStore | None = None,
         compendiums: CompendiumStore | None = None,
         doubt_review: bool = True,
+        features: Features = Features(),
     ):
         self.llm = llm
         self.review_llm = review_llm or llm
         self.doubt_review = doubt_review
+        self.features = features
         self.source_language = source_language
         self.target_language = target_language
         self.chunker = chunker or SmartChunker()
@@ -464,7 +491,9 @@ class TranslationPipeline:
         self.book_summary: str = ""
         self._cancelled = False
         self.cancelled = asyncio.Event()  # wakes a caller waiting on a slow model call
-        self._graph = build_chapter_graph(llm, self.glossaries, self.compendiums, review_llm)
+        self._graph = build_chapter_graph(
+            llm, self.glossaries, self.compendiums, review_llm, features
+        )
 
     @property
     def glossary(self):
@@ -493,15 +522,17 @@ class TranslationPipeline:
     async def analyze_chapter(self, text: str) -> AnalysisResult:
         """Run context analysis on the opening text and seed glossary and compendium."""
         result = await analyze_context(self.llm, text, self.source_language, self.target_language)
-        await self.glossaries.learn(result.key_terms, source_text=text)
-        await self.glossaries.learn(
-            [
-                GlossaryItem(source_term=term, target_term=term, do_not_translate=True)
-                for term in result.do_not_translate
-            ],
-            source_text=text,
-        )
-        await self.compendiums.learn(result.entities, source_text=text)
+        if self.features.learn_glossary:
+            await self.glossaries.learn(result.key_terms, source_text=text)
+            await self.glossaries.learn(
+                [
+                    GlossaryItem(source_term=term, target_term=term, do_not_translate=True)
+                    for term in result.do_not_translate
+                ],
+                source_text=text,
+            )
+        if self.features.learn_compendium:
+            await self.compendiums.learn(result.entities, source_text=text)
         return result
 
     async def translate_chapter(

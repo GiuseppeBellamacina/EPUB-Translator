@@ -10,6 +10,14 @@ class RunConfig(BaseModel):
     model: str | None = None
     review_model: str | None = None
     enable_review: bool = True
+    # feature switches (agents/pipeline.Features), plus the end-of-book doubt review
+    analysis: bool = True
+    use_glossary: bool = True
+    learn_glossary: bool = True
+    enforce_glossary: bool = True
+    use_compendium: bool = True
+    learn_compendium: bool = True
+    doubt_review: bool = True
     source_language: str | None = None  # None: the book's own
     target_language: str | None = None
     style_instructions: str = ""

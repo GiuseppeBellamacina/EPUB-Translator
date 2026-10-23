@@ -163,6 +163,7 @@ export function TranslatePage() {
       enableReview,
       reviewModel: enableReview ? reviewModel : undefined,
       restart,
+      features: settings.features,
     });
   };
 

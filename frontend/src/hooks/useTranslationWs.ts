@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { JobEvent } from "../lib/api";
+import type { Features, JobEvent } from "../lib/api";
 
 interface TranslateOptions {
   bookId: number;
@@ -14,6 +14,7 @@ interface TranslateOptions {
   reviewModel?: string;
   /** Discard saved progress instead of resuming from it. */
   restart?: boolean;
+  features?: Features;
 }
 
 const MAX_EVENTS = 500;
@@ -70,6 +71,7 @@ export function useTranslationWs(onFinished?: () => void) {
         restart: options.restart ?? false,
         enable_review: options.enableReview ?? true,
         review_model: options.reviewModel || undefined,
+        ...options.features,
       });
     },
     [connect],
