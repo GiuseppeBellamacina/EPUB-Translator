@@ -266,3 +266,52 @@ def test_waiting_books_can_be_reordered_while_the_queue_runs(client, sample_epub
     queue = _wait(client, lambda q: not q["running"])
     assert [i["book_id"] for i in queue["items"]] == [a, d, b, c]
     assert {i["status"] for i in queue["items"]} == {"done"}
+
+
+def _peak_running(client, until, timeout=60):
+    """Most books running at the same time until ``until(queue)``."""
+    peak, deadline = 0, time.time() + timeout
+    while time.time() < deadline:
+        queue = client.get("/api/queue").json()
+        peak = max(peak, sum(i["status"] == "running" for i in queue["items"]))
+        if until(queue):
+            return peak, queue
+        time.sleep(0.02)
+    raise AssertionError("queue did not settle")
+
+
+def test_books_run_in_parallel_but_a_carrying_queue_stays_in_order(
+    client, sample_epub, monkeypatch
+):
+    _slow(monkeypatch)
+    provider_id, (a, b, c, d) = _setup(client, sample_epub, books=4)
+    assert client.put("/api/settings", json={"max_parallel_books": 0}).status_code == 422
+    assert (
+        client.put("/api/settings", json={"max_parallel_books": 2}).json()["max_parallel_books"]
+        == 2
+    )
+    try:
+        # a queue that carries the glossary: in order; a second queue alongside it
+        keep = {"provider_id": provider_id, "keep_glossary": True}
+        client.post("/api/queue", json={"book_ids": [a, b], **keep})
+        client.post("/api/queue", json={"book_ids": [c], "provider_id": provider_id})
+        running = _wait(client, lambda q: sum(i["status"] == "running" for i in q["items"]) == 2)
+        assert {i["book_id"] for i in running["items"] if i["status"] == "running"} == {a, c}
+
+        peak, queue = _peak_running(client, lambda q: not q["running"])
+        assert peak <= 2 and {i["status"] for i in queue["items"]} == {"done"}
+
+        # a queue that carries nothing runs its books side by side
+        client.post("/api/queue", json={"book_ids": [d, a], "provider_id": provider_id})
+        peak, _ = _peak_running(client, lambda q: not q["running"])
+        assert peak == 2
+    finally:
+        client.put("/api/settings", json={"max_parallel_books": 1})
+
+
+def test_books_on_one_provider_share_its_rate_limiter():
+    from app.services.job_runner import _limiter_for
+
+    assert _limiter_for(1, 0.5) is _limiter_for(1, 0.5)
+    assert _limiter_for(1, 0.5) is not _limiter_for(2, 0.5)
+    assert _limiter_for(1, 0) is None

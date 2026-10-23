@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Loader2, Pause, Play, Plus, X } from "lucide-react";
 import { api, QUEUE_PILL, type Book, type QueueItem, type QueueState } from "../lib/api";
-import { Checkbox, MoveButtons } from "./controls";
+import { Checkbox, MoveButtons, Select } from "./controls";
+
+// a queue that carries glossary or compendium still translates its books in order
+const PARALLEL = ["1", "2", "3", "4", "6", "8"] as const;
 import { Button, Card, Heading, StatusPill } from "./ui";
 
 const bookName = (filename: string) => filename.replace(/\.(epub|pdf)$/i, "");
@@ -109,6 +112,15 @@ export function QueuePanel({
   onChange: () => void;
 }) {
   const [addingTo, setAddingTo] = useState<number | null>(null);
+  const [parallel, setParallel] = useState<number | null>(null);
+  useEffect(() => {
+    api.getSettings().then((s) => setParallel(s.max_parallel_books)).catch(() => {});
+  }, []);
+  const changeParallel = (value: string) =>
+    api.updateSettings({ max_parallel_books: Number(value) }).then((s) => {
+      setParallel(s.max_parallel_books);
+      onChange();
+    });
   const waiting = queue.items.some((i) => i.status === "pending" || i.status === "paused");
   const finished = queue.items.some((i) => i.status === "done" || i.status === "failed");
   const act = (call: Promise<unknown>) => call.finally(onChange);
@@ -122,10 +134,25 @@ export function QueuePanel({
         <div>
           <Heading id="queue-title">Queue</Heading>
           <p className="m-0 mt-1 text-[13px] text-muted">
-            {queue.running ? "Translating one book at a time." : waiting ? "Paused." : "Done."}
+            {queue.running
+              ? parallel && parallel > 1
+                ? `Translating up to ${parallel} books at a time.`
+                : "Translating one book at a time."
+              : waiting
+                ? "Paused."
+                : "Done."}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          {parallel !== null && (
+            <Select
+              label="Books in parallel"
+              value={String(parallel) as (typeof PARALLEL)[number]}
+              options={PARALLEL}
+              onChange={changeParallel}
+              className="w-40"
+            />
+          )}
           {finished && (
             <Button size="sm" variant="ghost" onClick={() => act(api.clearFinished())}>
               Clear finished
