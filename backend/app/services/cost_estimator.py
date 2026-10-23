@@ -27,6 +27,7 @@ from app.services.translation_service import (
     analysis_text,
     lead_context_for,
     trail_context_for,
+    unit_groups,
 )
 
 # Translations take more tokens than the English source (accents, longer words)
@@ -78,18 +79,21 @@ def _prompt_tokens(prompt, chunker: SmartChunker) -> int:
 
 
 def profile_document(doc: Document, chunker: SmartChunker) -> TokenProfile:
+    """Counts what the pipeline sends: short units are grouped like ``translate_document``."""
     chunks = source = context = 0
-    for i in range(len(doc.units)):
-        unit_chunks = chunker.create_chunks(doc.blocks(i, chunker))
-        chunks += len(unit_chunks)
-        source += sum(c.total_tokens for c in unit_chunks)
-        context += sum(chunker.count_tokens(c.context_text) for c in unit_chunks if c.context_text)
-        if unit_chunks and i > 0:  # first chunk gets the previous unit's tail as context
-            context += chunker.count_tokens(lead_context_for(doc, i, chunker))
+    blocks = {i: doc.blocks(i, chunker) for i in range(len(doc.units))}
+    for group in unit_groups(list(blocks), blocks, chunker):
+        first, last = group[0], group[-1]
+        group_chunks = chunker.create_chunks([b for i in group for b in blocks[i]])
+        chunks += len(group_chunks)
+        source += sum(c.total_tokens for c in group_chunks)
+        context += sum(chunker.count_tokens(c.context_text) for c in group_chunks if c.context_text)
+        if group_chunks and first > 0:  # first chunk gets the previous unit's tail as context
+            context += chunker.count_tokens(lead_context_for(doc, first, chunker))
         # every chunk also sees the text that follows it (next chunk's first block)
-        context += sum(c.blocks[0].token_count for c in unit_chunks[1:])
-        if unit_chunks:
-            context += chunker.count_tokens(trail_context_for(doc, i, chunker))
+        context += sum(c.blocks[0].token_count for c in group_chunks[1:])
+        if group_chunks:
+            context += chunker.count_tokens(trail_context_for(doc, last, chunker))
     analysis = chunker.count_tokens(analysis_text(doc))
     return TokenProfile(len(doc.units), chunks, source, context, analysis)
 

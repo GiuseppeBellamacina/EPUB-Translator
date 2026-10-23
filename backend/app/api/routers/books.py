@@ -33,7 +33,7 @@ from app.db.models import (
     TranslationJob,
 )
 from app.jobs import jobs
-from app.services.chunker import SmartChunker
+from app.services.chunker import make_chunker
 from app.services.cost_estimator import DEFAULT_MODELS, TokenProfile, estimate, profile_document
 from app.services.documents import open_document
 from app.services.html_processor import extract_visible_text
@@ -264,21 +264,25 @@ async def estimate_cost(
     if not book:
         raise HTTPException(404, "Book not found")
 
-    if book.token_profile is None:
-        chunker = SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2)
+    provider = await db.get(ProviderConfig, provider_id) if provider_id is not None else None
+    if provider_id is not None and not provider:
+        raise HTTPException(404, "Provider not found")
+    chunk_tokens = ((provider and provider.params) or {}).get("chunk_tokens", settings.chunk_tokens)
+
+    # the profile depends on the chunk size: cached for the last size asked
+    cached = book.token_profile or {}
+    if cached.get("chunk_tokens") != chunk_tokens:
+        chunker = make_chunker(chunk_tokens)
         profile = await asyncio.to_thread(
             lambda: profile_document(open_document(book.original_path), chunker)
         )
-        book.token_profile = asdict(profile)
+        book.token_profile = cached = {**asdict(profile), "chunk_tokens": chunk_tokens}
         await db.commit()
-    profile = TokenProfile(**book.token_profile)
+    profile = TokenProfile(**{k: v for k, v in cached.items() if k != "chunk_tokens"})
     language = target_language or book.target_language
     prices = await get_prices(force_refresh=refresh_prices)
 
-    if provider_id is not None and model:
-        provider = await db.get(ProviderConfig, provider_id)
-        if not provider:
-            raise HTTPException(404, "Provider not found")
+    if provider is not None and model:
         price = price_for(provider.provider_type, model, prices)
         if price is None and provider.provider_type in ("custom", "openrouter"):
             # OpenAI-compatible routers (OpenRouter) publish prices in their model list

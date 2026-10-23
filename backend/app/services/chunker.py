@@ -158,3 +158,10 @@ class SmartChunker:
         """Main entry point: extract blocks and create chunks from HTML."""
         blocks = self.extract_blocks(html_content)
         return self.create_chunks(blocks)
+
+
+def make_chunker(chunk_tokens: int) -> SmartChunker:
+    """The chunker of a job: ``chunk_tokens`` of text per model call, two blocks of overlap."""
+    return SmartChunker(
+        target_tokens=chunk_tokens, max_tokens=int(chunk_tokens * 1.6), overlap_blocks=2
+    )

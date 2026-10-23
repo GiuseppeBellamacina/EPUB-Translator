@@ -12,11 +12,13 @@ earlier) is never overwritten, not even by a near-duplicate spelling of it.
 
 import re
 
+from app.knowledge.matcher import TermMatcher
 from app.knowledge.similarity import TermIndex
 from app.models.schemas import GlossaryItem
 
 _PLACEHOLDER = re.compile(r"</?\d+/?>")
 MIN_ENFORCE_LENGTH = 3
+MAX_RELEVANT = 60  # entries per prompt: the chunk's own terms first
 
 
 def _key(term: str) -> str:
@@ -40,6 +42,7 @@ class Glossary:
     def __init__(self, entries: list[GlossaryItem] | None = None):
         self._entries: dict[str, GlossaryItem] = {}
         self._known = TermIndex()  # source terms, for near-duplicates
+        self._matcher = TermMatcher()  # source terms, to find the ones a text uses
         self.add(entries or [])
 
     @property
@@ -81,21 +84,25 @@ class Glossary:
             )
             self._entries[key] = entry
             self._known.add(key)
+            self._matcher.add(key, key)
             accepted.append(entry)
         return accepted
 
-    def relevant(self, text: str) -> list[GlossaryItem]:
-        """Entries whose source term occurs in ``text`` (keeps prompts small)."""
-        plain = _PLACEHOLDER.sub("", text)
-        return [e for e in self._entries.values() if _word_pattern(e.source_term).search(plain)]
+    def relevant(
+        self, text: str, context: str = "", limit: int = MAX_RELEVANT
+    ) -> list[GlossaryItem]:
+        """Entries whose source term occurs in ``text``, then those only in ``context``
+        (the text before it), at most ``limit``: prompts stay small."""
+        return [self._entries[k] for k in self._matcher.rank(text, context, limit)]
 
-    def enforce(self, text: str) -> str:
+    def enforce(self, text: str, entries: list[GlossaryItem] | None = None) -> str:
         """Replace source terms the model left untranslated with their target term.
 
-        Skips do-not-translate entries, very short terms and terms whose translation
-        equals the source (both would only cause spurious replacements).
+        Only ``entries`` when given (those of the passage translated). Skips
+        do-not-translate entries, very short terms and terms whose translation equals
+        the source (both would only cause spurious replacements).
         """
-        for entry in self._entries.values():
+        for entry in self._entries.values() if entries is None else entries:
             source, target = entry.source_term, entry.target_term
             if (
                 entry.do_not_translate

@@ -18,7 +18,7 @@ from collections import Counter
 NEAR_DUPLICATE = 0.78  # trigram cosine above which two words are spellings of one word
 MIN_FUZZY_LENGTH = 5  # shorter words only match exactly (Ruby / Rudy, god / goddess)
 
-_POSSESSIVE = re.compile(r"['’]s?\b")
+_POSSESSIVE = re.compile(r"['’]s?(?!\w)")  # Mara's, the Superds'
 _PUNCTUATION = re.compile(r"[^\w\s'’]")
 _STOPWORDS = {"the", "a", "an", "of", "and"}
 
