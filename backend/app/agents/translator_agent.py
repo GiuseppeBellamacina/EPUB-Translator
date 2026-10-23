@@ -7,8 +7,9 @@ import re
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.compendium import render
 from app.core.llm_factory import structured_chain
-from app.models.schemas import GlossaryItem, TranslationResult
+from app.models.schemas import CompendiumEntry, GlossaryItem, TranslationResult
 
 TRANSLATION_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -35,6 +36,13 @@ you used; source_term must be copied exactly as it appears in the text. Omit com
 8. The text may stop mid-sentence (it continues in the FOLLOWING TEXT, e.g. on the next \
 page): stop your translation at the same point, without completing the sentence or adding \
 closing quotation marks or punctuation
+9. Use the COMPENDIUM: give each character the listed gender in every agreement (articles, \
+adjectives, participles, pronouns) and follow its notes. When a character's gender is unknown \
+and the passage does not reveal it, prefer wording that does not commit to a gender
+10. Report in compendium_updates what THIS passage reveals that the COMPENDIUM lacks: new \
+characters (with their gender when pronouns, titles or descriptions make it clear), places \
+and other recurring elements, new aliases, and short notes useful to translate them \
+consistently. Only facts stated or clearly implied by the text; never repeat what is listed
 
 {style_instructions}""",
         ),
@@ -42,6 +50,9 @@ closing quotation marks or punctuation
             "human",
             """GLOSSARY (you MUST follow these translations):
 {glossary}
+
+COMPENDIUM (characters, places and other elements named here or just before):
+{compendium}
 
 CHAPTER CONTEXT: {chapter_summary}
 
@@ -99,6 +110,7 @@ async def translate_chunk(
     feedback: str = "",
     following: str = "",
     attempts: int | None = None,
+    compendium: list[CompendiumEntry] | None = None,
 ) -> TranslationResult:
     """
     Translate a text chunk with glossary awareness and context.
@@ -116,6 +128,7 @@ async def translate_chunk(
         following: Text right after the chunk (not translated), so sentences cut at a
             page end are recognised as unfinished
         attempts: Whole-call attempts (default: settings.chain_retries)
+        compendium: Compendium entries the chunk (or the text before it) names
 
     Returns:
         TranslationResult with translated text and any new terms found
@@ -130,6 +143,7 @@ async def translate_chunk(
             "following": following or "(End of chapter)",
             "chapter_summary": chapter_summary or "No summary available",
             "glossary": _format_glossary(glossary),
+            "compendium": render(compendium or []),
             "style_instructions": _format_style(style_instructions),
             "feedback": _format_feedback(feedback),
             "source_language": source_language,
@@ -168,9 +182,10 @@ def keep_unfinished(source: str, translation: str) -> str:
 
 async def translate_blocks(
     llm: BaseChatModel, blocks: list[str], attempts: int = 2, **kwargs
-) -> tuple[list[str], list[GlossaryItem]]:
+) -> tuple[list[str], list[GlossaryItem], list[CompendiumEntry]]:
     """Translate blocks as one chunk, guaranteeing one translation per block.
 
+    Returns the translations, the new glossary terms and the compendium updates.
     The chunk is retried when the model merges/splits paragraphs; if it still
     does, or a call fails (e.g. a degenerate output hitting the token cap, which
     an identical request would just repeat), each block is translated on its own
@@ -179,7 +194,11 @@ async def translate_blocks(
     if len(blocks) == 1:
         result = await translate_chunk(llm=llm, text=blocks[0], **kwargs)
         translation = " ".join(split_paragraphs(result.translated_text))
-        return [keep_unfinished(blocks[0], translation)], result.new_terms
+        return (
+            [keep_unfinished(blocks[0], translation)],
+            result.new_terms,
+            result.compendium_updates,
+        )
 
     for _ in range(attempts):
         try:
@@ -188,15 +207,18 @@ async def translate_blocks(
             break
         paragraphs = split_paragraphs(result.translated_text)
         if len(paragraphs) == len(blocks):
-            return [keep_unfinished(s, t) for s, t in zip(blocks, paragraphs)], result.new_terms
+            translations = [keep_unfinished(s, t) for s, t in zip(blocks, paragraphs)]
+            return translations, result.new_terms, result.compendium_updates
 
     # Per block: each block's following text is the next block
     following = kwargs.pop("following", "")
     translations: list[str] = []
     new_terms: list[GlossaryItem] = []
+    updates: list[CompendiumEntry] = []
     for i, block in enumerate(blocks):
         next_text = blocks[i + 1] if i + 1 < len(blocks) else following
-        single, terms = await translate_blocks(llm, [block], following=next_text, **kwargs)
+        single, terms, found = await translate_blocks(llm, [block], following=next_text, **kwargs)
         translations += single
         new_terms += terms
-    return translations, new_terms
+        updates += found
+    return translations, new_terms, updates

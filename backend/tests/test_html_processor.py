@@ -88,6 +88,6 @@ async def test_merged_paragraphs_fall_back_to_per_block_translation(llm):
     kwargs = dict(
         context="", chapter_summary="", glossary=[], source_language="en", target_language="it"
     )
-    out, _ = await translate_blocks(llm, ["one", "two", "three"], **kwargs)
+    out, *_ = await translate_blocks(llm, ["one", "two", "three"], **kwargs)
     assert out == ["ONE", "TWO", "THREE"]
     assert len(llm.calls_for(TranslationResult)) == 2 + 3  # 2 chunk attempts + 3 singles

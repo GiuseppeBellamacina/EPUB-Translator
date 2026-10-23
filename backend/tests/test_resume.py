@@ -204,3 +204,31 @@ async def test_prepare_drops_learned_near_duplicates_but_keeps_user_terms(book_i
     async with async_session() as s:
         rows = (await s.execute(select(GlossaryEntry.source_term))).scalars().all()
     assert sorted(rows) == ["Mara", "lighthouse keeper", "the Lighthouse"]
+
+
+async def test_compendium_is_persisted_reloaded_and_reset_on_restart(book_id, sample_epub):
+    from app.db.models import CompendiumRecord
+    from app.models.schemas import CompendiumEntry
+
+    llm = ScriptedLLM()
+    default = llm._build_result
+
+    def handler(prompt, n):
+        result = default(TranslationResult, [_human(prompt)])
+        result.compendium_updates = [CompendiumEntry(name="Mara", gender="female")]
+        return result
+
+    llm.handlers[TranslationResult] = handler
+    await run_job(book_id, sample_epub, llm, concurrency=1)
+    async with async_session() as s:
+        s.add(CompendiumRecord(book_id=book_id, name="Old Tom", user_edited=True))
+        await s.commit()
+
+    resume = await JobStore(book_id).prepare(open_document(sample_epub).units)
+    assert [(c.name, c.gender) for c in resume.compendium_learned] == [("Mara", "female")]
+    assert [c.name for c in resume.compendium_user] == ["Old Tom"]
+
+    resume = await JobStore(book_id).prepare(open_document(sample_epub).units, restart=True)
+    assert resume.compendium_learned == [] and [c.name for c in resume.compendium_user] == [
+        "Old Tom"
+    ]

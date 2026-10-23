@@ -3,17 +3,23 @@ Translation Pipeline — LangGraph orchestration of the agentic translation flow
 
 The per-chapter flow is modeled as a `StateGraph` with a Pydantic state:
 
-    translate ──▶ review ──▶ finalize ──▶ complete ──▶ END
-        ▲           │            │
-        └── retry ──┘            └── next chunk ──▶ translate
+    context ──▶ translate ──▶ review ──▶ learn ──▶ finalize ──▶ complete ──▶ END
+       ▲            ▲           │                     │
+       │            └── retry ──┘                     │
+       └──────────────────── next chunk ◀─────────────┘
+
+Only translate and review call the model. ``context`` picks the glossary terms and
+compendium entries the chunk mentions (also in the text before it: a "she" may refer
+to someone named earlier); ``learn`` folds what the accepted translation reported
+into them; ``finalize`` enforces the glossary and emits the resume checkpoint.
 
 The review step is optional (``enable_review``); a rejected chunk is retranslated
 with the reviewer's issues in the prompt. A chunk whose translation fails is not
-stored as translated: its blocks stay ``None`` (original kept) and its index is
-reported in ``failed_chunks`` so a later run can retry it.
+stored as translated: its blocks stay ``None`` (original kept), nothing is learned
+from it, and its index is reported in ``failed_chunks`` so a later run can retry it.
 
-The glossary is a single shared ``Glossary`` read live by every node, so terms
-learned in one chunk/chapter are used everywhere from then on.
+The glossary and the compendium are single shared objects read live by every node,
+so what one chunk/chapter learns is used everywhere from then on.
 
 Nodes emit progress via `get_stream_writer()` (custom stream mode), which the
 `TranslationPipeline` wrapper consumes and re-yields as `TranslationProgress`
@@ -31,10 +37,11 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.analyzer import analyze_context
+from app.agents.compendium import Compendium
 from app.agents.glossary import Glossary
 from app.agents.reviewer import review_translation
 from app.agents.translator_agent import split_paragraphs, translate_blocks
-from app.models.schemas import AnalysisResult, GlossaryItem
+from app.models.schemas import AnalysisResult, CompendiumEntry, GlossaryItem
 from app.services.chunker import Chunk, SmartChunker, TextBlock
 
 
@@ -75,8 +82,11 @@ class ChapterState(BaseModel):
     # Per-chunk working state
     position: int = 0  # index into `pending`
     retries: int = 0
+    glossary_context: list[GlossaryItem] = Field(default_factory=list)  # terms the chunk uses
+    compendium_context: list[CompendiumEntry] = Field(default_factory=list)  # who/what it names
     current_blocks: list[str] = Field(default_factory=list)  # one translation per chunk block
     current_new_terms: list[GlossaryItem] = Field(default_factory=list)
+    current_compendium: list[CompendiumEntry] = Field(default_factory=list)
     feedback: str = ""  # reviewer issues for the retranslation
     should_retry: bool = False
     translation_failed: bool = False
@@ -102,23 +112,39 @@ def _following(state: ChapterState) -> str:
     return state.trail_context
 
 
+def _previous(state: ChapterState) -> str:
+    """Text right before the current chunk (its overlap, or the end of the previous unit)."""
+    chunk = state.chunks[state.chunk_index]
+    return chunk.context_text or (state.lead_context if state.chunk_index == 0 else "")
+
+
 def build_chapter_graph(
-    llm: BaseChatModel, glossary: Glossary, review_llm: BaseChatModel | None = None
+    llm: BaseChatModel,
+    glossary: Glossary,
+    compendium: Compendium,
+    review_llm: BaseChatModel | None = None,
 ) -> CompiledStateGraph:
-    """Compile the per-chapter translation graph for a given model and shared glossary."""
+    """Compile the per-chapter graph for a given model and shared glossary/compendium."""
+
+    def context_node(state: ChapterState) -> dict[str, Any]:
+        text = _previous(state) + "\n" + state.chunks[state.chunk_index].text
+        return {
+            "glossary_context": glossary.relevant(text),
+            "compendium_context": compendium.relevant(text),
+        }
 
     async def translate_node(state: ChapterState) -> dict[str, Any]:
         writer = get_stream_writer()
         chunk = state.chunks[state.chunk_index]
         total = len(state.chunks)
         try:
-            translations, new_terms = await translate_blocks(
+            translations, new_terms, compendium_updates = await translate_blocks(
                 llm,
                 [b.text for b in chunk.blocks],
-                context=chunk.context_text
-                or (state.lead_context if state.chunk_index == 0 else ""),
+                context=_previous(state),
                 chapter_summary=state.chapter_summary,
-                glossary=glossary.relevant(chunk.context_text + "\n" + chunk.text),
+                glossary=state.glossary_context,
+                compendium=state.compendium_context,
                 source_language=state.source_language,
                 target_language=state.target_language,
                 style_instructions=state.style_instructions,
@@ -149,6 +175,7 @@ def build_chapter_graph(
         return {
             "current_blocks": translations,
             "current_new_terms": new_terms,
+            "current_compendium": compendium_updates,
             "translation_failed": False,
         }
 
@@ -161,7 +188,9 @@ def build_chapter_graph(
                 llm=review_llm or llm,
                 original_text=chunk.text,
                 translated_text=state.current_translation,
-                glossary=glossary.relevant(chunk.text),
+                glossary=state.glossary_context,
+                compendium=state.compendium_context,
+                previous=_previous(state),
                 source_language=state.source_language,
                 target_language=state.target_language,
                 style_instructions=state.style_instructions,
@@ -218,9 +247,39 @@ def build_chapter_graph(
             )
         return updates
 
-    def finalize_node(state: ChapterState) -> dict[str, Any]:
+    def learn_node(state: ChapterState) -> dict[str, Any]:
+        """Fold what the accepted translation reported into the glossary and compendium."""
         writer = get_stream_writer()
         chunk = state.chunks[state.chunk_index]
+        accepted = glossary.add(state.current_new_terms, source_text=chunk.text)
+        if accepted:
+            writer(
+                {
+                    "event_type": "glossary_update",
+                    "chunk_index": state.chunk_index,
+                    "total_chunks": len(state.chunks),
+                    "message": f"Added {len(accepted)} new glossary terms",
+                    "data": {"new_terms": [t.model_dump() for t in accepted]},
+                }
+            )
+        # names may only occur in the text before the chunk ("she" in this chunk)
+        changed = compendium.merge(
+            state.current_compendium, source_text=_previous(state) + "\n" + chunk.text
+        )
+        if changed:
+            writer(
+                {
+                    "event_type": "compendium_update",
+                    "chunk_index": state.chunk_index,
+                    "total_chunks": len(state.chunks),
+                    "message": "Compendium: " + ", ".join(e.name for e in changed),
+                    "data": {"entries": [e.model_dump() for e in changed]},
+                }
+            )
+        return {}
+
+    def finalize_node(state: ChapterState) -> dict[str, Any]:
+        writer = get_stream_writer()
         offset = state.offsets[state.chunk_index]
         updates: dict[str, Any] = {
             "position": state.position + 1,
@@ -229,6 +288,7 @@ def build_chapter_graph(
             "should_retry": False,
             "translation_failed": False,
             "current_new_terms": [],
+            "current_compendium": [],
             "current_blocks": [],
         }
 
@@ -236,17 +296,6 @@ def build_chapter_graph(
         if state.translation_failed:
             updates["failed_chunks"] = state.failed_chunks + [state.chunk_index]
         else:
-            accepted = glossary.add(state.current_new_terms, source_text=chunk.text)
-            if accepted:
-                writer(
-                    {
-                        "event_type": "glossary_update",
-                        "chunk_index": state.chunk_index,
-                        "total_chunks": len(state.chunks),
-                        "message": f"Added {len(accepted)} new glossary terms",
-                        "data": {"new_terms": [t.model_dump() for t in accepted]},
-                    }
-                )
             translations = [glossary.enforce(t) for t in state.current_blocks]
             blocks = list(state.translated_blocks)
             blocks[offset : offset + len(translations)] = translations
@@ -282,26 +331,32 @@ def build_chapter_graph(
         return {}
 
     def route_after_translate(state: ChapterState) -> str:
-        if state.translation_failed or not state.enable_review:
+        if state.translation_failed:
             return "finalize"
-        return "review"
+        return "review" if state.enable_review else "learn"
 
     def route_after_review(state: ChapterState) -> str:
-        return "translate" if state.should_retry else "finalize"
+        return "translate" if state.should_retry else "learn"
 
     def route_after_finalize(state: ChapterState) -> str:
-        return "translate" if state.position < len(state.pending) else "complete"
+        return "context" if state.position < len(state.pending) else "complete"
 
     builder = StateGraph(ChapterState)
+    builder.add_node("context", context_node)
     builder.add_node("translate", translate_node)
     builder.add_node("review", review_node)
+    builder.add_node("learn", learn_node)
     builder.add_node("finalize", finalize_node)
     builder.add_node("complete", complete_node)
 
-    builder.add_edge(START, "translate")
-    builder.add_conditional_edges("translate", route_after_translate, ["review", "finalize"])
-    builder.add_conditional_edges("review", route_after_review, ["translate", "finalize"])
-    builder.add_conditional_edges("finalize", route_after_finalize, ["translate", "complete"])
+    builder.add_edge(START, "context")
+    builder.add_edge("context", "translate")
+    builder.add_conditional_edges(
+        "translate", route_after_translate, ["review", "learn", "finalize"]
+    )
+    builder.add_conditional_edges("review", route_after_review, ["translate", "learn"])
+    builder.add_edge("learn", "finalize")
+    builder.add_conditional_edges("finalize", route_after_finalize, ["context", "complete"])
     builder.add_edge("complete", END)
 
     return builder.compile()
@@ -342,10 +397,11 @@ class TranslationPipeline:
         self.style_instructions = style_instructions
         self.enable_review = enable_review
         self.glossary = Glossary()
+        self.compendium = Compendium()
         self.book_summary: str = ""
         self._cancelled = False
         self.cancelled = asyncio.Event()  # wakes a caller waiting on a slow model call
-        self._graph = build_chapter_graph(llm, self.glossary, review_llm)
+        self._graph = build_chapter_graph(llm, self.glossary, self.compendium, review_llm)
 
     def cancel(self):
         """Signal cancellation to stop processing."""
@@ -355,6 +411,13 @@ class TranslationPipeline:
     def set_glossary(self, entries: list[GlossaryItem]):
         """Seed the glossary (e.g., from user edits or previous sessions)."""
         self.glossary.add(entries)
+
+    def set_compendium(
+        self, user: list[CompendiumEntry], learned: list[CompendiumEntry] | None = None
+    ) -> None:
+        """Seed the compendium: the user's entries (never changed) first, then learned ones."""
+        self.compendium.merge(user, user=True)
+        self.compendium.merge(learned or [])
 
     def add_glossary_entries(self, entries: list[GlossaryItem]) -> list[GlossaryItem]:
         """Add new entries to glossary, never overriding existing ones."""
@@ -371,6 +434,7 @@ class TranslationPipeline:
             ],
             source_text=text,
         )
+        self.compendium.merge(result.entities, source_text=text)
         return result
 
     async def translate_chapter(
@@ -438,9 +502,9 @@ class TranslationPipeline:
                 max_retries=self.max_retries,
                 enable_review=self.enable_review,
             )
-            # Each chunk can fan out to translate/review/(retry)/finalize, plus a
-            # terminal complete node — budget generously to avoid recursion limits.
-            recursion_limit = len(pending) * (4 + 2 * self.max_retries) + 10
+            # Each chunk runs context, translate/review (per attempt), learn and finalize,
+            # plus a terminal complete node — budget generously to avoid recursion limits.
+            recursion_limit = len(pending) * (5 + 2 * self.max_retries) + 10
 
             async for event in self._graph.astream(
                 init_state,

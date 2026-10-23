@@ -34,8 +34,9 @@ EXPANSION = {"english": 1.0, "italian": 1.25, "spanish": 1.2, "french": 1.25, "g
 DEFAULT_EXPANSION = 1.25
 REJECTION_RATE = 0.2  # share of chunks the reviewer rejects (one retry each)
 GLOSSARY_TOKENS = 100  # relevant glossary entries sent per call
+COMPENDIUM_TOKENS = 150  # relevant compendium entries sent per call
 SUMMARY_TOKENS = 80
-JSON_OVERHEAD = 50  # structured-output wrapping, new_terms
+JSON_OVERHEAD = 80  # structured-output wrapping, new_terms, compendium_updates
 ANALYSIS_OUTPUT = 600
 TOKENIZER_FACTOR = {"anthropic": 1.15, "openai": 1.0}  # vs the chars/4 estimate
 REASONING_FACTOR = 1.0  # extra thinking tokens per visible output token
@@ -97,7 +98,7 @@ def usage(profile: TokenProfile, target_language: str, review: bool) -> Usage:
     chunker = SmartChunker()
     expansion = EXPANSION.get(target_language.strip().lower(), DEFAULT_EXPANSION)
     translated = profile.source_tokens * expansion
-    per_call = GLOSSARY_TOKENS + SUMMARY_TOKENS
+    per_call = GLOSSARY_TOKENS + COMPENDIUM_TOKENS + SUMMARY_TOKENS
 
     translate_in = (
         profile.chunks * (_prompt_tokens(TRANSLATION_PROMPT, chunker) + per_call)
@@ -109,7 +110,9 @@ def usage(profile: TokenProfile, target_language: str, review: bool) -> Usage:
 
     if review:
         review_in = (
-            profile.chunks * (_prompt_tokens(REVIEW_PROMPT, chunker) + GLOSSARY_TOKENS)
+            profile.chunks
+            * (_prompt_tokens(REVIEW_PROMPT, chunker) + GLOSSARY_TOKENS + COMPENDIUM_TOKENS)
+            + profile.context_tokens  # the reviewer sees the text before the chunk too
             + profile.source_tokens
             + translated
         )

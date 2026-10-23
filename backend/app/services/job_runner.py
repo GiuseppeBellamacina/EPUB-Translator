@@ -97,7 +97,11 @@ def unsubscribe(book_id: int, queue: asyncio.Queue) -> None:
 
 
 async def enqueue(
-    book_ids: list[int], config: RunConfig, keep_glossary: bool = False, front: bool = False
+    book_ids: list[int],
+    config: RunConfig,
+    keep_glossary: bool = False,
+    front: bool = False,
+    keep_compendium: bool = False,
 ) -> list[QueueItem]:
     """Add books (a book already waiting gets the new settings and place), then run."""
     async with async_session() as db:
@@ -125,6 +129,7 @@ async def enqueue(
                 position=start + i,
                 config=config.model_dump(),
                 keep_glossary=keep_glossary and i > 0,  # never from an earlier batch
+                keep_compendium=keep_compendium and i > 0,
                 status="pending",
             )
             for i, book_id in enumerate(book_ids)
@@ -261,9 +266,14 @@ async def _run_queue() -> None:
         if _halt or not (item := await _next_item()):
             break
         await _set_item(item.id, "running")  # item still holds the config read before
-        carry_from = await _previous_book(item) if item.keep_glossary else None
+        previous = await _previous_book(item)
         try:
-            status = await run_job(item.book_id, RunConfig(**item.config), carry_from)
+            status = await run_job(
+                item.book_id,
+                RunConfig(**item.config),
+                carry_glossary_from=previous if item.keep_glossary else None,
+                carry_compendium_from=previous if item.keep_compendium else None,
+            )
             error = None
         except Exception as e:  # could not start (provider gone, unreadable file...)
             status, error = BookStatus.failed, str(e)
@@ -279,7 +289,12 @@ async def _run_queue() -> None:
 # --- one book ------------------------------------------------------------------
 
 
-async def run_job(book_id: int, config: RunConfig, carry_from: int | None = None) -> BookStatus:
+async def run_job(
+    book_id: int,
+    config: RunConfig,
+    carry_glossary_from: int | None = None,
+    carry_compendium_from: int | None = None,
+) -> BookStatus:
     """Translate one book; returns its final status. Raises only if it cannot start."""
     async with async_session() as db:
         provider = await db.get(ProviderConfig, config.provider_id)
@@ -331,8 +346,12 @@ async def run_job(book_id: int, config: RunConfig, carry_from: int | None = None
 
     try:
         resume = await store.prepare(doc.units, restart=config.restart)
-        carried = await store.import_glossary(carry_from) if carry_from else []
+        carried = await store.import_glossary(carry_glossary_from) if carry_glossary_from else []
         pipeline.set_glossary(resume.glossary + carried)
+        known = (
+            await store.import_compendium(carry_compendium_from) if carry_compendium_from else []
+        )
+        pipeline.set_compendium(resume.compendium_user + known, resume.compendium_learned)
         run_started[book_id] = (time.time(), len(resume.completed))
         # the full config is kept on the job so the UI can show (and resume with) it
         await store.start(provider.provider_type, llm_config.model, config.model_dump())
@@ -347,7 +366,8 @@ async def run_job(book_id: int, config: RunConfig, carry_from: int | None = None
                     if resume.previous
                     else ""
                 )
-                + (f", {len(carried)} glossary terms carried over" if carried else ""),
+                + (f", {len(carried)} glossary terms carried over" if carried else "")
+                + (f", {len(known)} compendium entries carried over" if known else ""),
                 "data": {"resumed_chapters": sorted(resume.completed)},
             },
         )

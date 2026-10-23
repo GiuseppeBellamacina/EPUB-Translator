@@ -21,7 +21,10 @@ Focus on:
 - Character names (these should generally NOT be translated)
 - Technical or domain-specific terms
 - Culturally significant phrases that need careful handling
-- The overall style and tone the translator should maintain""",
+- The overall style and tone the translator should maintain
+- Entities for the book's compendium: the main characters (with their gender when pronouns, \
+titles or descriptions make it clear, aliases and a short note on who they are and how they \
+speak) and the recurring places""",
         ),
         (
             "human",

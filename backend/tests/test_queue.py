@@ -59,10 +59,17 @@ def test_queue_translates_books_in_order_and_carries_the_glossary_on_request(
 ):
     provider_id, (first, second) = _setup(client, sample_epub)
     client.post(f"/api/glossary/{first}/entry", json={"source_term": "Moon", "target_term": "Luna"})
+    mara = {"name": "Mara", "gender": "female"}
+    client.put(f"/api/compendium/{first}", json={"entries": [mara]})
 
     r = client.post(
         "/api/queue",
-        json={"book_ids": [first, second], "provider_id": provider_id, "keep_glossary": keep},
+        json={
+            "book_ids": [first, second],
+            "provider_id": provider_id,
+            "keep_glossary": keep,
+            "keep_compendium": keep,
+        },
     )
     assert r.json() == {"queued": 2}
     queue = _wait(client, lambda q: not q["running"])
@@ -71,6 +78,8 @@ def test_queue_translates_books_in_order_and_carries_the_glossary_on_request(
     assert [i["status"] for i in queue["items"]] == ["done", "done"]
     assert _status(client, first) == _status(client, second) == "completed"
     assert ("Moon" in _terms(client, second)) is keep
+    carried = [(e["name"], e["gender"]) for e in client.get(f"/api/compendium/{second}").json()]
+    assert (("Mara", "female") in carried) is keep
     # the run's settings are kept with the book, so the UI can show and resume with them
     config = client.get(f"/api/books/{second}/progress").json()["config"]
     assert config["provider_id"] == provider_id and config["enable_review"] is True

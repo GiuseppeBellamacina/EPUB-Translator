@@ -21,6 +21,31 @@ class GlossaryItem(BaseModel):
     )
 
 
+class CompendiumEntry(BaseModel):
+    """A character, place or other element of the book, with what a translator must know."""
+
+    name: str = Field(description="The name as written in the source text (its fullest form)")
+    kind: Literal["character", "place", "organization", "item", "other"] = Field(
+        default="character", description="What the name refers to"
+    )
+    gender: Literal["male", "female", "unknown", "n/a"] = Field(
+        default="unknown",
+        description="For characters: the gender to use for agreement in the target language, "
+        "only when the text makes it clear (pronouns, titles, descriptions); else unknown. "
+        "n/a for places and things",
+    )
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Other names, nicknames or titles the SOURCE text uses for the same entity "
+        "(as written there, never translated)",
+    )
+    notes: str = Field(
+        default="",
+        description="One short sentence of facts that matter for the translation: role, "
+        "relations, how they speak or address others, a fixed translation choice",
+    )
+
+
 class AnalysisResult(BaseModel):
     genre: str = Field(description="Literary genre, e.g. fantasy, sci-fi, romance, non-fiction")
     tone: str = Field(description="Overall tone, e.g. formal, casual, humorous, dark, poetic")
@@ -36,6 +61,11 @@ class AnalysisResult(BaseModel):
         description="Proper nouns, brand names, or terms that must NOT be translated",
     )
     summary: str = Field(description="2-3 sentence summary of the content and themes")
+    entities: list[CompendiumEntry] = Field(
+        default_factory=list,
+        description="Main characters (with their gender when the text makes it clear), places "
+        "and other recurring elements, to start the book's compendium",
+    )
 
 
 class TranslationResult(BaseModel):
@@ -46,13 +76,20 @@ class TranslationResult(BaseModel):
         default_factory=list,
         description="New recurring terms encountered, to add to the shared glossary",
     )
+    compendium_updates: list[CompendiumEntry] = Field(
+        default_factory=list,
+        description="Characters, places or other elements of THIS passage that are missing from "
+        "the COMPENDIUM, or whose gender, aliases or notes this passage reveals; only facts "
+        "stated or clearly implied by the text",
+    )
 
 
 class ReviewIssue(BaseModel):
     severity: Literal["major", "minor"] = Field(
         description=(
             "major: meaning changed, content omitted or added, a glossary term not "
-            "followed, text left untranslated, or an inline placeholder lost. "
+            "followed, a character given the wrong gender (against the compendium), text "
+            "left untranslated, or an inline placeholder lost. "
             "minor: style, word choice or fluency preferences"
         )
     )

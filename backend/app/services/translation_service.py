@@ -98,6 +98,7 @@ async def translate_document(
                             include={"genre", "tone", "characters", "summary"}
                         ),
                         "glossary": [e.model_dump() for e in pipeline.glossary.entries],
+                        "compendium": [e.model_dump() for e in pipeline.compendium.entries],
                     },
                 )
             except Exception as e:
