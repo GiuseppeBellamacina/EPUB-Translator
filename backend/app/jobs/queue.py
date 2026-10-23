@@ -14,7 +14,6 @@ from app.db.models import Book, ProviderConfig, QueueItem
 from app.jobs.models import RunConfig
 
 WAITING = ("pending", "paused")
-FINISHED = ("done", "failed")
 
 
 class QueueRepository:
@@ -116,19 +115,13 @@ class QueueRepository:
             await db.execute(update(QueueItem).where(QueueItem.id == item_id).values(**values))
             await db.commit()
 
-    async def previous_book(self, item: QueueItem) -> int | None:
-        """The last finished book before ``item`` in its batch (carry-over source)."""
+    async def batch_books(self, batch_id: int | None) -> frozenset[int]:
+        """The books of a batch (a series sharing glossary/compendium)."""
         async with async_session() as db:
-            return await db.scalar(
-                select(QueueItem.book_id)
-                .where(
-                    QueueItem.batch_id == item.batch_id,  # never from another queue
-                    QueueItem.position < item.position,
-                    QueueItem.status.in_(FINISHED),
-                )
-                .order_by(QueueItem.position.desc())
-                .limit(1)
+            result = await db.execute(
+                select(QueueItem.book_id).where(QueueItem.batch_id == batch_id)
             )
+            return frozenset(result.scalars())
 
     async def reorder(self, batch_id: int, item_ids: list[int]) -> None:
         """Put a batch's waiting books in the given order, even while it runs.

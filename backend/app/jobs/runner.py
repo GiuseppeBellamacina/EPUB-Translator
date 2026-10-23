@@ -16,6 +16,7 @@ from app.db.database import async_session
 from app.db.models import Book, BookStatus, ProviderConfig
 from app.jobs.events import FINAL, EventBus, client_message
 from app.jobs.models import RunConfig
+from app.knowledge.store import KnowledgeRegistry
 from app.services.chunker import SmartChunker
 from app.services.documents import open_document
 from app.services.job_store import JobStore
@@ -23,9 +24,10 @@ from app.services.translation_service import translate_document
 
 
 class JobRunner:
-    def __init__(self, events: EventBus, halted: Callable[[], bool]):
+    def __init__(self, events: EventBus, halted: Callable[[], bool], knowledge: KnowledgeRegistry):
         self.events = events
         self._halted = halted  # a stop arrived: a book starting now is paused at once
+        self.knowledge = knowledge  # live glossary/compendium stores, shared per scope
         self.active: dict[int, TranslationPipeline] = {}  # running books, for stop
         self.started: dict[int, tuple[float, int]] = {}  # (start time, units done) for the ETA
         self._limiters: dict[tuple[int, float], InMemoryRateLimiter] = {}
@@ -45,10 +47,16 @@ class JobRunner:
         self,
         book_id: int,
         config: RunConfig,
-        carry_glossary_from: int | None = None,
-        carry_compendium_from: int | None = None,
+        series: int | None = None,
+        series_books: frozenset[int] = frozenset(),
+        share_glossary: bool = False,
+        share_compendium: bool = False,
     ) -> BookStatus:
-        """Translate one book; returns its final status. Raises only if it cannot start."""
+        """Translate one book; returns its final status. Raises only if it cannot start.
+
+        In a series (``series`` = its queue, ``series_books`` its books), a shared
+        glossary/compendium is one live store for all of them; otherwise the book's own.
+        """
         async with async_session() as db:
             provider = await db.get(ProviderConfig, config.provider_id)
             book = await db.get(Book, book_id)
@@ -84,36 +92,39 @@ class JobRunner:
             review_llm.rate_limiter = llm.rate_limiter
         doc = open_document(book.original_path)
 
-        pipeline = TranslationPipeline(
-            llm=llm,
-            source_language=config.source_language or book.source_language or "english",
-            target_language=config.target_language or book.target_language or "italian",
-            chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
-            max_retries=1,
-            style_instructions=config.style_instructions,
-            enable_review=config.enable_review,
-            review_llm=review_llm,
-        )
-        self.active[book_id] = pipeline
-        if self._halted():
-            pipeline.cancel()
         self.events.reset_log(book_id)
         store = JobStore(book_id)
         status, output_path, error = BookStatus.failed, None, None
         final_message: dict | None = None
+        held = []  # knowledge stores acquired, released at the end
+
+        def scope(shared: bool) -> tuple[str, set[int]]:
+            if shared and series is not None:
+                return f"series:{series}", set(series_books)
+            return f"book:{book_id}", set()
 
         try:
+            # first the checkpoint: a restart drops the learned knowledge the stores load
             resume = await store.prepare(doc.units, restart=config.restart)
-            carried = (
-                await store.import_glossary(carry_glossary_from) if carry_glossary_from else []
+            for kind, shared in (("glossary", share_glossary), ("compendium", share_compendium)):
+                name, related = scope(shared)
+                held.append(await self.knowledge.acquire(kind, name, book_id, related))
+            glossaries, compendiums = held
+            pipeline = TranslationPipeline(
+                llm=llm,
+                source_language=config.source_language or book.source_language or "english",
+                target_language=config.target_language or book.target_language or "italian",
+                chunker=SmartChunker(target_tokens=600, max_tokens=1000, overlap_blocks=2),
+                max_retries=1,
+                style_instructions=config.style_instructions,
+                enable_review=config.enable_review,
+                review_llm=review_llm,
+                glossaries=glossaries,
+                compendiums=compendiums,
             )
-            pipeline.set_glossary(resume.glossary + carried)
-            known = (
-                await store.import_compendium(carry_compendium_from)
-                if carry_compendium_from
-                else []
-            )
-            pipeline.set_compendium(resume.compendium_user + known, resume.compendium_learned)
+            self.active[book_id] = pipeline
+            if self._halted():
+                pipeline.cancel()
             self.started[book_id] = (time.time(), len(resume.completed))
             # the full config is kept on the job so the UI can show (and resume with) it
             await store.start(provider.provider_type, llm_config.model, config.model_dump())
@@ -128,8 +139,12 @@ class JobRunner:
                         if resume.previous
                         else ""
                     )
-                    + (f", {len(carried)} glossary terms carried over" if carried else "")
-                    + (f", {len(known)} compendium entries carried over" if known else ""),
+                    + (
+                        f", sharing {len(glossaries.glossary)} glossary terms and "
+                        f"{len(compendiums.compendium)} compendium entries with its series"
+                        if series is not None and (share_glossary or share_compendium)
+                        else ""
+                    ),
                     "data": {"resumed_chapters": sorted(resume.completed)},
                 },
             )
@@ -165,6 +180,8 @@ class JobRunner:
             error = str(e)
             self.events.publish(book_id, {"event": "error", "message": f"Translation failed: {e}"})
         finally:
+            for knowledge_store in held:
+                self.knowledge.release(knowledge_store)
             self.active.pop(book_id, None)
             self.started.pop(book_id, None)
             await store.finish(status, output_path, error)

@@ -1,9 +1,9 @@
 """The queue's worker pool: up to ``max_parallel_books`` books at the same time.
 
-Workers claim waiting books in queue order. A queue that carries glossary or
-compendium runs its books one after another (the next one starts from the previous
-one's). A stop pauses the running books and halts the pool: the books waiting at
-that moment become paused, and only ``resume`` runs them again.
+Workers claim waiting books in queue order. The books of a queue that keeps
+glossary or compendium share one live store of it, so they may run in parallel too.
+A stop pauses the running books and halts the pool: the books waiting at that
+moment become paused, and only ``resume`` runs them again.
 """
 
 import asyncio
@@ -15,16 +15,17 @@ from app.jobs.events import FINAL, EventBus
 from app.jobs.models import RunConfig
 from app.jobs.queue import QueueRepository
 from app.jobs.runner import JobRunner
+from app.knowledge.store import KnowledgeRegistry
 from app.services import app_settings
 
 logger = logging.getLogger(__name__)
 
 
 class QueueScheduler:
-    def __init__(self, queue: QueueRepository, events: EventBus):
+    def __init__(self, queue: QueueRepository, events: EventBus, knowledge: KnowledgeRegistry):
         self.queue = queue
         self.events = events
-        self.runner = JobRunner(events, halted=lambda: self.halted)
+        self.runner = JobRunner(events, halted=lambda: self.halted, knowledge=knowledge)
         self.halted = False
         self._halted_at: datetime | None = None  # when the last stop happened
         self._workers: set[asyncio.Task] = set()
@@ -80,11 +81,8 @@ class QueueScheduler:
         """The first waiting book a worker may start, claimed so no other worker takes it."""
         items = await self.queue.pending()
         # no await from here on: checking and claiming happen without another worker between
-        busy = set(self._claimed.values())
         for item in items:
             if item.id in self._claimed:
-                continue
-            if (item.keep_glossary or item.keep_compendium) and item.batch_id in busy:
                 continue
             self._claimed[item.id] = item.batch_id
             return item
@@ -107,13 +105,15 @@ class QueueScheduler:
 
     async def _run_item(self, item: QueueItem) -> None:
         await self.queue.set_status(item.id, "running")  # item holds the config read before
-        previous = await self.queue.previous_book(item)
+        shared = item.keep_glossary or item.keep_compendium
         try:
             status = await self.runner.run(
                 item.book_id,
                 RunConfig(**item.config),
-                carry_glossary_from=previous if item.keep_glossary else None,
-                carry_compendium_from=previous if item.keep_compendium else None,
+                series=item.batch_id if shared else None,
+                series_books=await self.queue.batch_books(item.batch_id) if shared else frozenset(),
+                share_glossary=bool(item.keep_glossary),
+                share_compendium=bool(item.keep_compendium),
             )
             error = None
         except Exception as e:  # could not start (provider gone, unreadable file...)

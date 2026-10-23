@@ -16,6 +16,7 @@ from app.jobs.events import FINAL, EventBus
 from app.jobs.models import RunConfig
 from app.jobs.queue import QueueRepository
 from app.jobs.scheduler import QueueScheduler
+from app.knowledge.store import KnowledgeRegistry
 
 __all__ = ["FINAL", "RunConfig", "jobs"]
 
@@ -27,7 +28,8 @@ class JobsService:
     def reset(self) -> None:
         self.events = EventBus()
         self.queue = QueueRepository()
-        self.scheduler = QueueScheduler(self.queue, self.events)
+        self.knowledge = KnowledgeRegistry()  # live glossary/compendium stores
+        self.scheduler = QueueScheduler(self.queue, self.events, self.knowledge)
         self.runner = self.scheduler.runner
 
     async def enqueue(

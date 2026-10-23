@@ -101,3 +101,46 @@ def test_only_names_of_the_source_text_are_kept():
         source_text="Roxy smiled. The tutor nodded.",
     )
     assert c.entries == [e("Roxy", gender="female", aliases=["the tutor"])]
+
+
+async def test_a_series_store_is_shared_live_and_written_to_every_member(db):
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.database import async_session
+    from app.db.models import Book, GlossaryEntry
+    from app.knowledge.store import KnowledgeRegistry
+    from app.models.schemas import GlossaryItem
+
+    async with async_session() as s:
+        books = [Book(filename=f"{n}.epub", original_path="x") for n in "ab"]
+        s.add_all(books)
+        await s.flush()
+        a, b = (x.id for x in books)
+        s.add(GlossaryEntry(book_id=a, source_term="Moon", target_term="Luna", user_edited=True))
+        await s.commit()
+
+    registry = KnowledgeRegistry()
+    # both books start together: the second must still receive what the first loads
+    first, second = await asyncio.gather(
+        registry.acquire("glossary", "series:1", a, {a, b}),
+        registry.acquire("glossary", "series:1", b, {a, b}),
+    )
+    assert first is second and [e.source_term for e in first.glossary.entries] == ["Moon"]
+
+    # many concurrent learns: one row per term and book, nothing lost
+    terms = [GlossaryItem(source_term=f"Star{n}", target_term=f"Stella{n}") for n in range(20)]
+    await asyncio.gather(*(first.learn([t]) for t in terms))
+    async with async_session() as s:
+        rows = (await s.execute(select(GlossaryEntry.book_id, GlossaryEntry.source_term))).all()
+    for book in (a, b):
+        assert sorted(t for k, t in rows if k == book) == sorted(
+            ["Moon", *(t.source_term for t in terms)]
+        )
+
+    registry.release(first)
+    registry.release(second)
+    again = await registry.acquire("glossary", "series:1", a, {a, b})
+    assert again is not first  # released by every job: reloaded from the database
+    assert len(again.glossary) == 21

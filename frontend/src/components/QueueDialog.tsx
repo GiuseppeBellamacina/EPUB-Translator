@@ -100,11 +100,11 @@ export function QueueDialog({
               <Toggle
                 checked={keepGlossary}
                 onChange={setKeepGlossary}
-                label="Keep the glossary from one book to the next"
+                label="One glossary for the whole queue (a series)"
               />
               <p className="m-0 pl-12 text-xs text-faint">
                 {keepGlossary
-                  ? "Each book starts with the terms of the book before it (same series)."
+                  ? "Every book uses and grows the same glossary, live, also when books run in parallel."
                   : "Each book starts with its own glossary."}
               </p>
             </div>
@@ -112,11 +112,11 @@ export function QueueDialog({
               <Toggle
                 checked={keepCompendium}
                 onChange={setKeepCompendium}
-                label="Keep the compendium from one book to the next"
+                label="One compendium for the whole queue"
               />
               <p className="m-0 pl-12 text-xs text-faint">
                 {keepCompendium
-                  ? "Characters, genders and notes carry over to the next book."
+                  ? "Characters, genders and notes are shared live by every book of the queue."
                   : "Each book builds its own compendium."}
               </p>
             </div>
