@@ -395,80 +395,6 @@ wheels = [
 ]
 
 [[package]]
-name = "epub-translator-backend"
-version = "2.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "beautifulsoup4" },
-    { name = "cryptography" },
-    { name = "ebooklib" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-anthropic" },
-    { name = "langchain-core" },
-    { name = "langchain-ollama" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "lxml" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pymupdf" },
-    { name = "python-dotenv" },
-    { name = "python-multipart" },
-    { name = "pyyaml" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "tiktoken" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "httpx" },
-    { name = "isort" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.19.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
-    { name = "cryptography", specifier = ">=42.0.0" },
-    { name = "ebooklib", specifier = ">=0.18" },
-    { name = "fastapi", specifier = ">=0.110.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13.0" },
-    { name = "langchain", specifier = ">=0.2.0" },
-    { name = "langchain-anthropic", specifier = ">=0.1.0" },
-    { name = "langchain-core", specifier = ">=0.2.0" },
-    { name = "langchain-ollama", specifier = ">=0.1.0" },
-    { name = "langchain-openai", specifier = ">=0.1.0" },
-    { name = "langgraph", specifier = ">=0.1.0" },
-    { name = "lxml", specifier = ">=5.0.0" },
-    { name = "pydantic", specifier = ">=2.5.0" },
-    { name = "pydantic-settings", specifier = ">=2.1.0" },
-    { name = "pymupdf", specifier = ">=1.24" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.25" },
-    { name = "tiktoken", specifier = ">=0.6.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
-    { name = "websockets", specifier = ">=12.0" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "fastapi"
 version = "0.136.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2169,6 +2095,80 @@ sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
 ]
+
+[[package]]
+name = "translatio-backend"
+version = "2.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "beautifulsoup4" },
+    { name = "cryptography" },
+    { name = "ebooklib" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "langchain" },
+    { name = "langchain-anthropic" },
+    { name = "langchain-core" },
+    { name = "langchain-ollama" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "lxml" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pymupdf" },
+    { name = "python-dotenv" },
+    { name = "python-multipart" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tiktoken" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "httpx" },
+    { name = "isort" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.19.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "cryptography", specifier = ">=42.0.0" },
+    { name = "ebooklib", specifier = ">=0.18" },
+    { name = "fastapi", specifier = ">=0.110.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13.0" },
+    { name = "langchain", specifier = ">=0.2.0" },
+    { name = "langchain-anthropic", specifier = ">=0.1.0" },
+    { name = "langchain-core", specifier = ">=0.2.0" },
+    { name = "langchain-ollama", specifier = ">=0.1.0" },
+    { name = "langchain-openai", specifier = ">=0.1.0" },
+    { name = "langgraph", specifier = ">=0.1.0" },
+    { name = "lxml", specifier = ">=5.0.0" },
+    { name = "pydantic", specifier = ">=2.5.0" },
+    { name = "pydantic-settings", specifier = ">=2.1.0" },
+    { name = "pymupdf", specifier = ">=1.24" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.25" },
+    { name = "tiktoken", specifier = ">=0.6.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "websockets", specifier = ">=12.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "typing-extensions"

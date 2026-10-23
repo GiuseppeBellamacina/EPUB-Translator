@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 490" width="1180" height="490" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title id="title">Translatio chapter graph</title>
+  <desc id="desc">LangGraph per-chapter workflow: context, translate, review, learn, finalize, complete. Translate and review call the model; the other nodes are code. Glossary and compendium are shared by every chunk.</desc>
+  <style>
+    .t { fill: #1b2433; font-size: 15px; font-weight: 600; }
+    .s { fill: #5b6474; font-size: 11.5px; }
+    .lbl { fill: #5b6474; font-size: 12px; }
+    .code { fill: #f4f2ed; stroke: #b9b3a7; }
+    .llm { fill: #e3efe8; stroke: #2f6b4f; }
+    .store { fill: #f1edf8; stroke: #7a5cad; }
+    .edge { fill: none; stroke: #7d8696; stroke-width: 1.6; }
+    .retry { stroke: #b3741c; }
+    .fail { stroke: #b4473f; stroke-dasharray: 5 4; }
+    .data { fill: none; stroke: #7a5cad; stroke-width: 1.4; stroke-dasharray: 3 4; }
+    .dot { fill: #1b2433; }
+    .head { fill: #7d8696; }
+    .head-retry { fill: #b3741c; }
+    .head-fail { fill: #b4473f; }
+    .head-data { fill: #7a5cad; }
+    @media (prefers-color-scheme: dark) {
+      .t { fill: #e8e6e1; }
+      .s, .lbl { fill: #a3abb8; }
+      .code { fill: #232830; stroke: #4a5160; }
+      .llm { fill: #1d3a2c; stroke: #5fae86; }
+      .store { fill: #2a2438; stroke: #a58bd6; }
+      .edge { stroke: #8b94a3; }
+      .dot { fill: #e8e6e1; }
+      .head { fill: #8b94a3; }
+      .data { stroke: #a58bd6; }
+      .head-data { fill: #a58bd6; }
+      .retry { stroke: #d99a45; }
+      .fail { stroke: #e06c63; }
+      .head-retry { fill: #d99a45; }
+      .head-fail { fill: #e06c63; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-retry" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-fail" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-data" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+
+  <!-- legend -->
+  <rect class="llm" x="20" y="16" width="22" height="14" rx="4"/>
+  <text class="lbl" x="50" y="27">calls the model</text>
+  <rect class="code" x="160" y="16" width="22" height="14" rx="4"/>
+  <text class="lbl" x="190" y="27">plain code</text>
+  <rect class="store" x="280" y="16" width="22" height="14" rx="4"/>
+  <text class="lbl" x="310" y="27">shared by every chunk and chapter</text>
+
+  <!-- start / end -->
+  <circle class="dot" cx="38" cy="200" r="9"/>
+  <text class="s" x="38" y="226" text-anchor="middle">START</text>
+  <circle class="dot" cx="1142" cy="200" r="9"/>
+  <circle cx="1142" cy="200" r="13" fill="none" stroke="#7d8696" stroke-width="1.6"/>
+  <text class="s" x="1142" y="230" text-anchor="middle">END</text>
+
+  <!-- nodes -->
+  <rect class="code" x="80" y="172" width="130" height="56" rx="10"/>
+  <text class="t" x="145" y="196" text-anchor="middle">context</text>
+  <text class="s" x="145" y="214" text-anchor="middle">relevant terms &amp; people</text>
+
+  <rect class="llm" x="260" y="172" width="130" height="56" rx="10"/>
+  <text class="t" x="325" y="196" text-anchor="middle">translate</text>
+  <text class="s" x="325" y="214" text-anchor="middle">text + new terms/notes</text>
+
+  <rect class="llm" x="440" y="172" width="130" height="56" rx="10"/>
+  <text class="t" x="505" y="196" text-anchor="middle">review</text>
+  <text class="s" x="505" y="214" text-anchor="middle">major issues only</text>
+
+  <rect class="code" x="620" y="172" width="130" height="56" rx="10"/>
+  <text class="t" x="685" y="196" text-anchor="middle">learn</text>
+  <text class="s" x="685" y="214" text-anchor="middle">merge, no duplicates</text>
+
+  <rect class="code" x="800" y="172" width="130" height="56" rx="10"/>
+  <text class="t" x="865" y="196" text-anchor="middle">finalize</text>
+  <text class="s" x="865" y="214" text-anchor="middle">enforce · checkpoint</text>
+
+  <rect class="code" x="980" y="172" width="120" height="56" rx="10"/>
+  <text class="t" x="1040" y="196" text-anchor="middle">complete</text>
+  <text class="s" x="1040" y="214" text-anchor="middle">chapter result</text>
+
+  <!-- main flow -->
+  <path class="edge" d="M47,200 H78" marker-end="url(#a)"/>
+  <path class="edge" d="M210,200 H258" marker-end="url(#a)"/>
+  <path class="edge" d="M390,200 H438" marker-end="url(#a)"/>
+  <text class="lbl" x="414" y="190" text-anchor="middle">on</text>
+  <path class="edge" d="M570,200 H618" marker-end="url(#a)"/>
+  <text class="lbl" x="594" y="190" text-anchor="middle">ok</text>
+  <path class="edge" d="M750,200 H798" marker-end="url(#a)"/>
+  <path class="edge" d="M930,200 H978" marker-end="url(#a)"/>
+  <text class="lbl" x="954" y="190" text-anchor="middle">last</text>
+  <path class="edge" d="M1100,200 H1127" marker-end="url(#a)"/>
+
+  <!-- review off: translate → learn -->
+  <path class="edge" d="M315,172 C315,110 685,110 685,170" marker-end="url(#a)"/>
+  <text class="lbl" x="500" y="122" text-anchor="middle">review off</text>
+
+  <!-- failed: translate → finalize -->
+  <path class="edge fail" d="M345,172 C345,60 865,60 865,170" marker-end="url(#af)"/>
+  <text class="lbl" x="605" y="74" text-anchor="middle">translation failed: blocks kept in the original, nothing learned</text>
+
+  <!-- retry: review → translate -->
+  <path class="edge retry" d="M505,228 C505,282 325,282 325,230" marker-end="url(#ar)"/>
+  <text class="lbl" x="415" y="296" text-anchor="middle">rejected: retranslate with the reviewer's issues</text>
+
+  <!-- next chunk: finalize → context -->
+  <path class="edge" d="M865,228 C865,390 145,390 145,230" marker-end="url(#a)"/>
+  <text class="lbl" x="505" y="366" text-anchor="middle">next chunk</text>
+
+  <!-- shared stores -->
+  <rect class="store" x="250" y="408" width="530" height="64" rx="12"/>
+  <text class="t" x="515" y="434" text-anchor="middle">Glossary · Compendium</text>
+  <text class="s" x="515" y="454" text-anchor="middle">terms, near-duplicates rejected · characters with gender, aliases, notes</text>
+  <path class="data" d="M250,440 C160,440 110,360 110,232" marker-end="url(#ad)"/>
+  <text class="lbl" x="118" y="400" text-anchor="end">read</text>
+  <path class="data" d="M685,230 C700,320 720,370 720,406" marker-end="url(#ad)"/>
+  <text class="lbl" x="728" y="392">write</text>
+</svg>

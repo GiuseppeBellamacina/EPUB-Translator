@@ -1,110 +1,143 @@
-# EPUB Translator
+# Translatio
 
-Intelligent EPUB and PDF translation tool with a modern React UI and an agentic translation engine that maintains terminology consistency across your entire book.
+Translate whole books — EPUB and PDF — with LLMs, keeping the original format and layout.
+Only the language changes. A per-book glossary and compendium keep names, terms and the
+gender of every character consistent from the first page to the last.
+
+![Translating a book: progress, queue, live original/translation and activity](docs/screenshots/translate-running.png)
 
 ## Features
 
-- **Agentic Translation Pipeline**: Context Analyzer → Translator → Reviewer (3-agent system)
-- **Glossary Consistency**: Auto-generated glossary maintained across all chapters, editable by the user
-- **Smart Chunking**: Hybrid paragraph + sliding window chunking with context overlap
-- **Multi-Provider LLM**: OpenAI, Anthropic, Ollama, or any OpenAI-compatible API
-- **Real-time Progress**: WebSocket-based live updates per chapter and chunk
-- **Side-by-Side Preview**: Compare original vs translated text
-- **Translation History**: Track all translated books with re-download capability
-- **Spacing Fix**: Post-processing eliminates excessive whitespace in rebuilt EPUBs
-- **Same format, same layout**: EPUB in → EPUB out, PDF in → PDF out; structure, images, inline formatting and page layout are preserved, only the language changes
-- **Resumable jobs**: progress is checkpointed per chunk; a stopped, disconnected or crashed job resumes where it left off (or can start over)
-- **Cost estimate on upload**: per-model cost (OpenAI and Claude, with or without review) computed from the book's real chunks with prices updated daily
-- **Rate-limit aware**: configurable requests/second, parallel chapters and automatic retries with backoff on 429/5xx
-- **Deployable**: Docker Compose setup (frontend + backend)
+- **Same format, same layout**: EPUB in → EPUB out, PDF in → PDF out. Structure, images, inline formatting and page layout are kept; PDF text is re-typeset in place with metric-compatible fonts (subset, so the file stays the size of the original).
+- **Agentic pipeline on LangGraph**: analysis → per chunk *context → translate → review → learn → finalize* ([diagram below](#how-a-chapter-is-translated)). A reviewer flags only major issues and the chunk is retranslated with them.
+- **Glossary**: built while translating, editable, enforced; near-duplicates (*Demon Kings* / *Demon King*, *Kingdom of Asura* / *Asura Kingdom*, spelling variants) are recognised and never added twice.
+- **Compendium**: characters with their gender, aliases and translation notes, plus places and other recurring elements. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue.
+- **Queues**: upload several books at once, translate them one after another on the server, add books to a running queue, and carry glossary and compendium from one book to the next (a series). The translate page follows the queue to its next book.
+- **Resumable**: progress is checkpointed per chunk. Pause, a closed page, a crash or a restart never lose finished work; failed parts are retried on resume.
+- **Live view**: progress, ETA, cost so far, the current passage side by side and a filterable activity log.
+- **Cost estimate** per model before you start, from the book's real chunks and daily-updated prices.
+- **Providers**: OpenAI, Anthropic, OpenRouter, Ollama, any OpenAI-compatible endpoint; models listed live from each provider; rate limits, retries with backoff and per-provider concurrency.
+- **Runs in Docker**: nothing to install on the host but Docker.
 
-## Architecture
+## How a chapter is translated
 
-```
-├── frontend/       # React + Vite + TailwindCSS (Bun)
-├── backend/        # FastAPI + LangChain + SQLite
-│   ├── agents/     # Analyzer, Translator, Reviewer
-│   ├── services/   # Chunker, EPUB, HTML processor
-│   └── api/        # REST + WebSocket endpoints
-└── docker-compose.yml
-```
+![Chapter graph: context, translate, review, learn, finalize](docs/translation-graph.svg)
 
-## Quick Start
+Each chapter (or PDF page) is split into chunks of whole paragraphs and runs through a LangGraph `StateGraph`. Only *translate* and *review* call the model:
 
-Only Docker is required on the host: development, tests and linting all run in containers.
+| Node | What it does |
+| --- | --- |
+| **context** | Picks the glossary terms and compendium entries the chunk mentions — also in the text right before it, since a *she* may refer to someone named earlier. |
+| **translate** | Translates the chunk (one output paragraph per source paragraph, inline markup kept as placeholders) and, in the same call, reports new terms and what the passage reveals about characters and places. |
+| **review** | Optional. Checks meaning, omissions, glossary and gender against the compendium; only *major* issues reject the chunk, which is retranslated with them. |
+| **learn** | Merges the new terms (near-duplicates rejected) and the compendium updates (only facts the text states; your own edits are never changed). |
+| **finalize** | Enforces the glossary and saves the checkpoint used to resume. |
 
-### Start / stop (PowerShell)
+Before the first chapter, an analysis of the opening pages seeds the glossary and the compendium with the main terms and characters. Chapters run concurrently (bounded), sharing the same glossary and compendium.
 
-```powershell
-./run.ps1 start          # development: hot reload
-./run.ps1 start -Prod    # production images
-./run.ps1 stop           # (add -Prod if started with -Prod)
-```
+## Screenshots
 
-The script checks that Docker is running and `.env` exists, builds, starts in the
-background and waits until both services answer. The plain compose commands below do
-the same.
+| | |
+| --- | --- |
+| ![Library with a running queue](docs/screenshots/library.png) | ![Compendium of a book](docs/screenshots/compendium.png) |
+| **Library** — queues, per-book status, add books to a running queue | **Compendium** — gender, aliases and notes per character |
+| ![Queue several books](docs/screenshots/queue-dialog.png) | ![Side-by-side preview](docs/screenshots/preview.png) |
+| **Queue** — one set of settings, glossary and compendium carried over | **Preview** — original and translation side by side |
+| ![Providers](docs/screenshots/providers.png) | ![Upload](docs/screenshots/upload.png) |
+| **Providers** — live status and models of each provider | **Upload** — one or more EPUB/PDF files |
 
-### Development
+## Quick start
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
+Only Docker is required: development, tests and linting all run in containers.
 
-Backend with hot reload at http://localhost:8000, Vite frontend at http://localhost:3000.
-All data (uploads, translated files, SQLite DB) lives in the repo-root `data/` folder.
+1. Put your API keys in a `.env` at the repo root (see [`.env.example`](.env.example); `OPENAI-API-KEY` style names work too).
+2. Start the stack:
 
-### Production
+   ```powershell
+   ./run.ps1 start          # development, hot reload
+   ./run.ps1 start -Prod    # production images
+   ./run.ps1 stop           # add -Prod if started with -Prod
+   ```
 
-```bash
-docker compose up --build
-```
+   or directly:
 
-Frontend at http://localhost:3000, Backend at http://localhost:8000
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build   # development
+   docker compose up --build                                                   # production
+   ```
 
-### Providers from `.env` and `config.yaml`
+3. Open <http://localhost:3000> (API at <http://localhost:8000>).
 
-Put API keys in a repo-root `.env` (see `.env.example`; `OPENAI-API-KEY` style names work too).
-On startup the backend upserts the providers declared in `config.yaml`, skipping any whose key
-is missing. Without a `providers:` section it creates one provider per known key
-(OpenAI, OpenRouter, Anthropic). The default `config.yaml` sets up `openrouter-free`,
-`openai-cheap` (`gpt-4.1-nano`) and the offline `fake` provider.
+All data — uploads, translated files and the SQLite database — lives in the repo-root `data/` folder.
 
 ## Usage
 
-1. **Settings** → Providers from `config.yaml` are already there; add more if needed (OpenAI API key, Ollama URL, etc.)
-2. **Upload** → Drag & drop your EPUB file
-3. **Configure** → Select provider, model, languages
-4. **Translate** → Watch real-time progress, edit glossary if needed
-5. **Preview** → Side-by-side comparison of original vs translated
-6. **Download** → Get your translated EPUB
+1. **Upload** one or more EPUB/PDF files. A single book shows its cost estimate per model.
+2. **Translate**: pick provider, model, optional reviewer model, languages and style, then start — or **Queue N books** to translate several in a row.
+3. **Follow** the progress live; edit the glossary and the compendium whenever the translation is paused. You can close the page: the job runs on the server.
+4. **Preview** original and translation side by side, then **Download** the translated file.
 
-## Translation Pipeline
+## Configuration
 
+`config.yaml` (repo root, mounted read-only) is applied at startup:
+
+```yaml
+providers:                 # upserted by name; skipped if their key is missing from .env
+  - name: OpenRouter
+    type: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    params:
+      requests_per_second: 0.25   # per-provider overrides: max_concurrency, max_retries, ...
+  - name: OpenAI
+    type: openai
+    api_key_env: OPENAI_API_KEY
+
+translation:               # defaults for every job
+  max_concurrency: 2       # chapters translated in parallel
+  requests_per_second: 0.5
+  llm_max_retries: 5       # SDK retries with backoff on 429/5xx
+  chain_retries: 3         # retries of a whole call (invalid structured output)
+  enable_review: true
+
+pricing:
+  models:                  # models shown in the cost estimate
+    openai: [gpt-4.1-nano, gpt-4.1-mini, gpt-5.4-mini, gpt-6-luna]
 ```
-EPUB Upload
-  → Context Analysis (genre, tone, characters, key terms)
-  → Auto-generate Glossary
-  → Per Chapter:
-      → Smart Chunking (paragraph boundaries, 600 token target, 2-block overlap)
-      → Translate (glossary-aware, context-aware)
-      → Review (consistency check, glossary violations)
-      → Retry if issues found
-  → Rebuild EPUB (spacing-normalized HTML)
-  → Validate & Save
+
+Without a `providers:` section, one provider is created per known key in `.env` (OpenAI, OpenRouter, Anthropic). Providers can also be added and edited from the **Providers** page.
+
+| Provider | Type | Notes |
+| --- | --- | --- |
+| OpenAI | `openai` | GPT-4.1, GPT-5.x, GPT-6, o-series (reasoning models handled automatically) |
+| Anthropic | `anthropic` | Claude models |
+| OpenRouter | `openrouter` | Hundreds of models, many free (`:free`), prices read from the listing |
+| Ollama | `ollama` | Local models, listed from the Ollama server |
+| Custom | `custom` | Any OpenAI-compatible endpoint (vLLM, LM Studio, Together, …) |
+| Fake | `fake` | Offline test provider, deterministic output, no key |
+
+## Architecture
+
+```text
+├── frontend/              React 19 + Vite + Tailwind v4 (Bun)
+│   └── src/               pages (upload, translate, library, providers, preview), components, API client
+├── backend/               FastAPI + LangChain/LangGraph + SQLAlchemy (SQLite)
+│   ├── app/agents/        analyzer, translator, reviewer, chapter graph, glossary, compendium
+│   ├── app/services/      job runner and queue, documents (EPUB/PDF), chunker, persistence, pricing
+│   ├── app/api/           REST + WebSocket
+│   └── tests/             pytest, scripted fake LLMs (no network)
+├── docs/                  diagram and screenshots
+├── config.yaml            providers and defaults
+└── docker-compose*.yml    production + development override
 ```
 
-## Supported Providers
+Developer notes (commands, architecture in depth, conventions) are in [CLAUDE.md](CLAUDE.md).
 
-| Provider  | Type  | Notes                                                     |
-| --------- | ----- | --------------------------------------------------------- |
-| OpenAI    | Cloud | GPT-4o, GPT-4o-mini, etc.                                 |
-| Anthropic | Cloud | Claude 3.5, Claude 4, etc.                                |
-| Ollama    | Local | Any model (llama3, mistral, etc.)                         |
-| Custom    | Any   | Any OpenAI-compatible endpoint (vLLM, LMStudio, Together) |
+## Development
 
-## Requirements
-
-- Python 3.11+ with [uv](https://docs.astral.sh/uv/)
-- Bun 1.0+ (or Node.js 18+)
-- Docker (optional, for deployment)
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
+$DC run --rm --no-deps backend pytest            # backend tests
+$DC run --rm --no-deps backend pytest -m live    # real-provider smoke tests (uses API quota)
+$DC run --rm frontend bun run lint               # frontend lint
+./format.ps1                                     # isort, black, ruff, eslint, tsc
+```

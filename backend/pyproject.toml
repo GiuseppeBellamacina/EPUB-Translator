@@ -1,5 +1,5 @@
 [project]
-name = "epub-translator-backend"
+name = "translatio-backend"
 version = "2.0.0"
 description = "Agentic EPUB translation engine with FastAPI backend"
 requires-python = ">=3.11"

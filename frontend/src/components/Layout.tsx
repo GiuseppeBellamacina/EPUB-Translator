@@ -14,7 +14,7 @@ export function Layout() {
     <div className="flex min-h-screen flex-col bg-paper md:h-screen md:flex-row md:overflow-hidden">
       <aside className="flex shrink-0 flex-col border-b border-line bg-surface md:w-58 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-6 pb-3 pt-5 md:pb-6">
-          <span className="font-serif text-[22px] font-semibold text-ink">Translator</span>
+          <span className="font-serif text-[22px] font-semibold text-ink">Translatio</span>
           <ThemeToggle className="md:hidden" />
         </div>
 

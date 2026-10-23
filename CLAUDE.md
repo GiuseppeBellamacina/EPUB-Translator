@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Translatio** translates EPUB and PDF books with LLMs, keeping format and layout (the repo and the app were called EPUB Translator; the DB file `epub_translator.db`, the default encryption key and the theme storage key keep the old name so existing data stays readable). The README has the user-facing overview and `docs/translation-graph.svg` the chapter graph.
+
 ## Commands
 
 Everything runs in Docker — do not install or run Python/Bun tooling on the host. `./run.ps1 start|stop [-Prod]` starts/stops the stack (dev by default) and waits for health. Directly, use the dev override:
@@ -36,7 +38,7 @@ Provider bootstrap (`app/core/bootstrap.py`, run on startup): API keys come from
 
 ## Architecture
 
-Monorepo: `backend/` (FastAPI + LangChain/LangGraph + async SQLAlchemy/aiosqlite) and `frontend/` (React 19 + Vite + Tailwind v4 + Zustand + react-router).
+Monorepo: `backend/` (FastAPI + LangChain/LangGraph + async SQLAlchemy/aiosqlite) and `frontend/` (React 19 + Vite + Tailwind v4 + Headless UI + react-router).
 
 **Translation flow** — the core of the app, spans several layers:
 
@@ -96,7 +98,7 @@ Defaults live in `Settings`, `config.yaml` `translation:` overrides them at star
 - **Model rules** (`llm_factory`): `thinks_by_default` and `accepts_temperature` decide which models are billed for thinking (OpenAI reasoning models, Claude ≥ 5) and which get `temperature` (Claude Opus 4.7+ / 5.x reject it with a 400).
 - **Model list**: `config.yaml` `pricing.models` (it replaces the built-in `DEFAULT_MODELS`, so it can leave a vendor out), plus the default models of configured providers. With `provider_id` + `model` the endpoint estimates just that model.
 
-**Model picker** (`GET /api/providers/{id}/models`; `POST /api/providers/models` for a provider not saved yet, also a key check, `services/model_catalog.py`, `components/ModelPicker.tsx`): models are listed live from the provider's API.
+**Model picker** (`GET /api/providers/{id}/models`; `POST /api/providers/models` for a provider not saved yet, also a key check, `services/model_catalog.py`, `components/ModelCombobox.tsx`): models are listed live from the provider's API.
 - **How each provider is listed**: OpenAI and Anthropic through their official SDKs; OpenRouter (its own `openrouter` type; the URL is implicit, and old `custom` rows with its URL are converted at startup) and other OpenAI-compatible endpoints (`custom`) through the OpenAI SDK with `base_url` (their listing includes prices); Ollama via `/api/tags` at the provider's `base_url` or `ollama_base_url` (default `http://host.docker.internal:11434`: the host seen from the container; `extra_hosts: host-gateway` in compose for Linux), with a readable "Ollama is not running at …" error.
 - **Filtering**: OpenAI's list is reduced to chat models usable with chat completions; embeddings, audio, image, `-pro` and dated snapshots that have an alias are dropped.
 - **Prices**: `price_for` maps router names (`openai/gpt-4.1-mini`, `*:free`) to known prices.

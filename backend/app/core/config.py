@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EPUB_", extra="ignore")
 
-    app_name: str = "EPUB Translator"
+    app_name: str = "Translatio"
     debug: bool = False
 
     # Single data directory (repo-root data/ mounted at /data in the containers)

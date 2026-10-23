@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Start or stop the EPUB Translator containers.
+    Start or stop the Translatio containers.
 
 .EXAMPLE
     ./run.ps1 start          # development: hot reload, http://localhost:3000
