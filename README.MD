@@ -11,7 +11,7 @@ gender of every character consistent from the first page to the last.
 - **Same format, same layout**: EPUB in → EPUB out, PDF in → PDF out. Structure, images, inline formatting and page layout are kept; PDF text is re-typeset in place with metric-compatible fonts (subset, so the file stays the size of the original).
 - **Agentic pipeline on LangGraph**: analysis → per chunk *context → translate → review → learn → finalize* → doubt review ([diagram below](#how-a-chapter-is-translated)). A reviewer flags only major issues and the chunk is retranslated with them.
 - **Glossary**: built while translating, enforced; near-duplicates (*Demon Kings* / *Demon King*, *Kingdom of Asura* / *Asura Kingdom*, spelling variants) are recognised and never added twice. Each prompt gets only the terms its passage uses (plurals and possessives included), the passage's own first.
-- **Compendium**: characters with their gender, aliases and translation notes, plus places and other recurring elements. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue. A guessed gender is corrected when the text proves otherwise (the quote is kept as evidence).
+- **Compendium**: characters with their gender, aliases and translation notes, plus places, organizations, items and other recurring elements, shown by kind. English often leaves gender implicit, Italian never does: the translator uses it for every agreement and the reviewer treats a wrong gender as a major issue. A guessed gender is corrected when the text proves otherwise (the quote is kept as evidence).
 - **Edit while translating**: change or delete a single glossary term or compendium entry at any time; the running job uses it from the next chunk.
 - **Targeted fixes after the fact**: change a term's translation or a character's gender once the book is done, and only the passages that name it are fixed — by direct replacement where the old translation appears as is and nothing around it has to change, by the model elsewhere (one passage at a time, told exactly what changed, free to rewrite the sentence so articles, adjectives and pronouns agree). Nothing else is read again. Large changes ask once per book, or never with the *Ask before large fixes* switch off.
 - **Doubts**: the translator bookmarks what it had to guess (a gender not revealed yet, who *she* is, an unknown term); a corrected gender bookmarks the passages already translated. At the end of the book a dedicated review revisits them with everything learned since and fixes what was wrong.
@@ -44,12 +44,14 @@ Before the first chapter, an analysis of the opening pages seeds the glossary an
 
 | | |
 | --- | --- |
-| ![Library with a running queue](docs/screenshots/library.png) | ![Compendium of a book](docs/screenshots/compendium.png) |
-| **Library** — queues, per-book status, add books to a running queue | **Compendium** — gender, aliases and notes per character |
-| ![Queue several books](docs/screenshots/queue-dialog.png) | ![Side-by-side preview](docs/screenshots/preview.png) |
-| **Queue** — one set of settings, glossary and compendium carried over | **Preview** — original and translation side by side |
-| ![Providers](docs/screenshots/providers.png) | ![Upload](docs/screenshots/upload.png) |
-| **Providers** — live status and models of each provider | **Upload** — one or more EPUB/PDF files |
+| ![Translation running](docs/screenshots/translate-running.png) | ![Doubts and fixes](docs/screenshots/fixes.png) |
+| **Translate** — live passage side by side, queue progress, activity log | **Doubts and fixes** — a glossary change (*faro* → *torre del faro*) fixed only where it occurs, agreements included |
+| ![Compendium of a book](docs/screenshots/compendium.png) | ![Glossary of a book](docs/screenshots/glossary.png) |
+| **Compendium** — by kind, gender, aliases and notes; edit one entry at a time, also while translating | **Glossary** — terms learned while translating; a change is followed to the passages that use it |
+| ![Library with a running queue](docs/screenshots/library.png) | ![Queue several books](docs/screenshots/queue-dialog.png) |
+| **Library** — queues (drag to reorder), books in parallel, add books to a running queue | **Queue** — one set of settings and feature switches; a series shares glossary and compendium live |
+| ![Providers](docs/screenshots/providers.png) | ![Side-by-side preview](docs/screenshots/preview.png) |
+| **Providers** — live status and models; how much glossary and compendium each prompt gets | **Preview** — original and translation side by side |
 
 ## Quick start
 
